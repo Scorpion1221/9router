@@ -1086,6 +1086,52 @@ docker restart 9router
 docker stop 9router && docker rm 9router
 ```
 
+### Docker Compose
+
+A `docker-compose.yml` is included for a one-command setup with persistent
+storage, healthcheck, and auto-restart.
+
+```bash
+# 1. Prepare environment file
+cp .env.example .env
+# Edit .env and change at minimum: JWT_SECRET, INITIAL_PASSWORD,
+# API_KEY_SECRET, MACHINE_ID_SALT
+# DATA_DIR must be set to /app/data (matches the named volume)
+
+# 2. Build image and start container in the background
+docker compose up -d --build
+
+# 3. Check status and follow logs
+docker compose ps
+docker compose logs -f
+```
+
+The app is then available at:
+- Dashboard: `http://localhost:20128/dashboard`
+- OpenAI-compatible API: `http://localhost:20128/v1`
+
+Common operations:
+
+```bash
+docker compose restart            # restart the container
+docker compose down               # stop and remove the container (keeps data volume)
+docker compose down -v            # also delete the data volume (DANGEROUS)
+docker compose up -d --build      # rebuild after code or Dockerfile changes
+git pull && docker compose up -d --build   # pull upstream and rebuild
+```
+
+Persistent data lives in the named volume `9router-data` (mounted at
+`/app/data` inside the container), which contains `db/data.sqlite`,
+`usage.json`, and the saved password hash. Stopping/recreating the
+container preserves it; only `docker compose down -v` destroys it.
+
+> Note: `docker-compose.yml` sets `command: ["node", "app/server.js"]` to
+> work around a path mismatch in the upstream Dockerfile. `next.config.mjs`
+> sets `outputFileTracingRoot` to the parent directory, so Next.js
+> standalone output lands at `/app/app/server.js` instead of the path the
+> image's default `CMD` expects. Once upstream fixes this, the `command:`
+> line can be removed.
+
 ### Environment Variables
 
 | Variable | Default | Description |
