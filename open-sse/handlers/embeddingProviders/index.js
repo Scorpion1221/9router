@@ -1,6 +1,7 @@
 // Embeddings provider adapter registry
 import createOpenAIEmbeddingAdapter from "./openai.js";
 import gemini from "./gemini.js";
+import vertex from "./vertex.js";
 import openaiCompatNode from "./openaiCompatNode.js";
 
 const OPENAI_COMPAT_PROVIDERS = [
@@ -12,6 +13,8 @@ const ADAPTERS = {
   ...Object.fromEntries(OPENAI_COMPAT_PROVIDERS.map((id) => [id, createOpenAIEmbeddingAdapter(id)])),
   gemini,
   google_ai_studio: gemini,
+  vertex,
+  "vertex-partner": vertex,
 };
 
 export function getEmbeddingAdapter(provider) {
