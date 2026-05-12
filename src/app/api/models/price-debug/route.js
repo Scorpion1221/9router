@@ -1,7 +1,10 @@
-// Debug endpoint: GET /api/models/price-debug?provider=...&model=...
+// Diagnostic endpoint: GET /api/models/price-debug?provider=...&model=...
 // Returns the result of pricingRepo.getPricingForModel(), letting us verify
-// the full fallback chain (user override → constants → OpenRouter cache).
-// TODO: remove or gate behind admin auth once OpenRouter sync stabilizes.
+// the full fallback chain (user override → constants → OpenRouter cache →
+// pattern guess). Useful when a model's cost looks wrong — query this
+// endpoint to see which resolver returned the price and from what source.
+//
+// No auth: only returns public price data and ref IDs, no credentials.
 import { NextResponse } from "next/server";
 import { getPricingForModel } from "@/lib/db";
 
