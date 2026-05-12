@@ -38,6 +38,39 @@ export async function handleEmbeddingsCore({
   }
 
   const ctx = { input };
+
+  // Optional: adapter takes over the entire request cycle (needed for models
+  // that require per-input calls, e.g. Vertex gemini-embedding-2 which has no
+  // batchEmbedContents endpoint). Must return a normalized OpenAI-shape body
+  // or throw { status, message } on upstream error.
+  if (typeof adapter.fetchAll === "function") {
+    try {
+      const normalized = await adapter.fetchAll({
+        model,
+        credentials,
+        input,
+        dimensions: body.dimensions,
+        encoding_format: body.encoding_format || "float",
+        log,
+      });
+      if (onRequestSuccess) await onRequestSuccess();
+      return {
+        success: true,
+        response: new Response(JSON.stringify(normalized), {
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        }),
+      };
+    } catch (err) {
+      const status = err?.status || HTTP_STATUS.BAD_GATEWAY;
+      const msg = formatProviderError(err, provider, model, status);
+      log?.debug?.("EMBEDDINGS", `fetchAll error: ${msg}`);
+      return createErrorResult(status, msg);
+    }
+  }
+
   const url = adapter.buildUrl(model, credentials, ctx);
   const headers = adapter.buildHeaders(credentials, ctx);
   const requestBody = adapter.buildBody(model, {

@@ -21,6 +21,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
     organization: "",
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
+  const [vertexData, setVertexData] = useState({ location: "us-central1", projectId: "" });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [validating, setValidating] = useState(false);
@@ -46,6 +47,12 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       if (connection.provider === "cloudflare-ai" && connection.providerSpecificData) {
         setCloudflareData({ accountId: connection.providerSpecificData.accountId || "" });
       }
+      if ((connection.provider === "vertex" || connection.provider === "vertex-partner") && connection.providerSpecificData) {
+        setVertexData({
+          location: connection.providerSpecificData.location || "us-central1",
+          projectId: connection.providerSpecificData.projectId || "",
+        });
+      }
       setTestResult(null);
       setValidationResult(null);
     }
@@ -54,6 +61,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   const isOAuth = connection?.authType === "oauth";
   const isAzure = connection?.provider === "azure";
   const isCloudflareAi = connection?.provider === "cloudflare-ai";
+  const isVertex = connection?.provider === "vertex" || connection?.provider === "vertex-partner";
   const isCompatible = connection
     ? (isOpenAICompatibleProvider(connection.provider) || isAnthropicCompatibleProvider(connection.provider))
     : false;
@@ -86,6 +94,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           apiKey: formData.apiKey,
           ...(isAzure ? { providerSpecificData: azureData } : {}),
           ...(isCloudflareAi ? { providerSpecificData: cloudflareData } : {}),
+          ...(isVertex ? { providerSpecificData: vertexData } : {}),
         }),
       });
       const data = await res.json();
@@ -120,6 +129,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
                 apiKey: formData.apiKey,
                 ...(isAzure ? { providerSpecificData: azureData } : {}),
                 ...(isCloudflareAi ? { providerSpecificData: cloudflareData } : {}),
+                ...(isVertex ? { providerSpecificData: vertexData } : {}),
               }),
             });
             const data = await res.json();
@@ -149,6 +159,12 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       }
       if (isCloudflareAi) {
         updates.providerSpecificData = { accountId: cloudflareData.accountId };
+      }
+      if (isVertex) {
+        const psd = {};
+        if (vertexData.location?.trim()) psd.location = vertexData.location.trim();
+        if (vertexData.projectId?.trim()) psd.projectId = vertexData.projectId.trim();
+        updates.providerSpecificData = psd;
       }
       
       await onSave(updates);
@@ -181,7 +197,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
         />
 
-        {!isOAuth && (
+        {!isOAuth && !isVertex && (
           <>
             <div className="flex gap-2">
               <Input
@@ -205,6 +221,52 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
               </Badge>
             )}
           </>
+        )}
+
+        {!isOAuth && isVertex && (
+          <>
+            <div className="flex flex-col gap-2">
+              <label className="text-xs text-text-muted">Service Account JSON or raw API Key (leave blank to keep current)</label>
+              <textarea
+                className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[120px] focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder={'Paste either:\n  • Full Service Account JSON — { "type": "service_account", ... }\n  • Or a raw Vertex API key'}
+                value={formData.apiKey}
+                onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
+              />
+              <div className="flex gap-2 justify-end">
+                <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary" size="sm">
+                  {validating ? "Checking..." : "Check"}
+                </Button>
+              </div>
+            </div>
+            {validationResult && (
+              <Badge variant={validationResult === "success" ? "success" : "error"}>
+                {validationResult === "success" ? "Valid" : "Invalid"}
+              </Badge>
+            )}
+          </>
+        )}
+
+        {isVertex && (
+          <div className="bg-sidebar/50 p-4 rounded-lg border border-accent/20">
+            <h3 className="font-semibold mb-3 text-sm">Vertex AI Configuration</h3>
+            <div className="flex flex-col gap-3">
+              <Input
+                label="Location (region)"
+                value={vertexData.location}
+                onChange={(e) => setVertexData({ ...vertexData, location: e.target.value })}
+                placeholder="us-central1"
+                hint="Region must support the model. us-central1 is a safe default."
+              />
+              <Input
+                label="Project ID"
+                value={vertexData.projectId}
+                onChange={(e) => setVertexData({ ...vertexData, projectId: e.target.value })}
+                placeholder="my-gcp-project"
+                hint="Optional — SA JSON includes project_id automatically; only needed for raw API keys."
+              />
+            </div>
+          </div>
         )}
 
         {isAzure && (
@@ -243,7 +305,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           </div>
         )}
 
-        {!isCompatible && !isAzure && !isCloudflareAi && (
+        {!isCompatible && !isAzure && !isCloudflareAi && !isVertex && (
           <div className="flex items-center gap-3">
             <Button onClick={handleTest} variant="secondary" disabled={testing}>
               {testing ? "Testing..." : "Test Connection"}

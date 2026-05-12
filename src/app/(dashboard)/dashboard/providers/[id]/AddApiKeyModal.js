@@ -17,6 +17,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
   const isAzure = provider === "azure";
   const isCloudflareAi = provider === "cloudflare-ai";
+  const isVertex = provider === "vertex" || provider === "vertex-partner";
 
   const [formData, setFormData] = useState({
     name: "",
@@ -33,6 +34,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     organization: "",
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
+  const [vertexData, setVertexData] = useState({ location: "us-central1", projectId: "" });
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -54,6 +56,12 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     }
     if (isCloudflareAi) {
       return { accountId: cloudflareData.accountId };
+    }
+    if (isVertex) {
+      const data = {};
+      if (vertexData.location?.trim()) data.location = vertexData.location.trim();
+      if (vertexData.projectId?.trim()) data.projectId = vertexData.projectId.trim();
+      return Object.keys(data).length ? data : undefined;
     }
     return undefined;
   };
@@ -204,7 +212,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             </div>
           </div>
         )}
-        {!isOllamaLocal && (
+        {!isOllamaLocal && !isVertex && (
           <div className="flex gap-2">
             <Input
               label={credentialLabel}
@@ -216,6 +224,22 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             />
             <div className="pt-6">
               <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
+                {validating ? "Checking..." : "Check"}
+              </Button>
+            </div>
+          </div>
+        )}
+        {isVertex && (
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-text-muted">Service Account JSON or raw API Key</label>
+            <textarea
+              className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[120px] focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder={'Paste either:\n  • Full Service Account JSON (recommended) — { "type": "service_account", ... }\n  • Or a raw Vertex API key string'}
+              value={formData.apiKey}
+              onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
+            />
+            <div className="flex gap-2 justify-end">
+              <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary" size="sm">
                 {validating ? "Checking..." : "Check"}
               </Button>
             </div>
@@ -271,6 +295,28 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             />
             <p className="text-xs text-text-muted mt-2">
               Find your Account ID in the right sidebar of <a href="https://dash.cloudflare.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">dash.cloudflare.com</a>
+            </p>
+          </div>
+        )}
+        {isVertex && (
+          <div className="bg-sidebar/50 p-4 rounded-lg border border-accent/20">
+            <h3 className="font-semibold mb-3 text-sm">Vertex AI Configuration</h3>
+            <div className="flex flex-col gap-3">
+              <Input
+                label="Location (region)"
+                value={vertexData.location}
+                onChange={(e) => setVertexData({ ...vertexData, location: e.target.value })}
+                placeholder="us-central1"
+              />
+              <Input
+                label="Project ID (optional — auto-detected from SA JSON)"
+                value={vertexData.projectId}
+                onChange={(e) => setVertexData({ ...vertexData, projectId: e.target.value })}
+                placeholder="my-gcp-project"
+              />
+            </div>
+            <p className="text-xs text-text-muted mt-2">
+              Location must support the model. <code>us-central1</code> is a safe default and covers all current Gemini / Text embedding models. Project ID is only needed when using a raw API key (SA JSON includes it).
             </p>
           </div>
         )}
