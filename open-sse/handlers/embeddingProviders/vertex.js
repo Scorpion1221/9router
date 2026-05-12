@@ -20,7 +20,26 @@
 //   Raw key  → global aiplatform host with ?key=
 // Token minting is handled upstream (services/tokenRefresh.js → refreshVertexToken),
 // so credentials.accessToken is already populated by the time this adapter runs.
-import { parseVertexSaJson } from "../../services/tokenRefresh.js";
+import { parseVertexSaJson, refreshVertexToken } from "../../services/tokenRefresh.js";
+
+// Ensure SA-flow credentials have a fresh Bearer token before issuing requests.
+// checkAndRefreshToken upstream only refreshes when `expiresAt` is set; freshly
+// added Vertex SA connections have no expiresAt, so we mint on demand here.
+// Mutates `creds` in place so subsequent calls in the same fetchAll loop reuse it.
+async function ensureVertexAccessToken(creds, log) {
+  const saJson = parseVertexSaJson(creds?.apiKey);
+  if (!saJson) return; // raw-key flow, nothing to do
+  if (creds.accessToken && creds.expiresAt && new Date(creds.expiresAt).getTime() - Date.now() > 60_000) {
+    return; // still fresh
+  }
+  const minted = await refreshVertexToken(saJson, log);
+  if (minted?.accessToken) {
+    creds.accessToken = minted.accessToken;
+    if (minted.expiresAt) {
+      creds.expiresAt = new Date(minted.expiresAt).toISOString();
+    }
+  }
+}
 
 function isEmbedContentModel(model) {
   // gemini-embedding-2 family uses the Gemini embedContent protocol, not predict.
@@ -133,6 +152,7 @@ export default {
   // Full request takeover — used for gemini-embedding-2-preview which requires
   // :embedContent (no batch endpoint available on Vertex for this model).
   fetchAll: async function ({ model, credentials, input, dimensions, log }) {
+    await ensureVertexAccessToken(credentials, log);
     if (!isEmbedContentModel(model)) {
       // Signal core to fall back to buildUrl/buildBody path for non-gemini-2 models.
       // We do this by throwing a sentinel with a special marker that core treats
