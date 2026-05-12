@@ -548,6 +548,12 @@ export const PROVIDER_MODELS = {
     { id: "gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash Lite Preview" },
     { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview" },
     { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    // Embedding models — region must be a real region (e.g. us-central1),
+    // not 'global'. See open-sse/handlers/embeddingProviders/vertex.js.
+    { id: "gemini-embedding-2-preview", name: "Gemini Embedding 2 (Preview)", type: "embedding" },
+    { id: "gemini-embedding-001", name: "Gemini Embedding 001", type: "embedding" },
+    { id: "text-embedding-005", name: "Text Embedding 005", type: "embedding" },
+    { id: "text-multilingual-embedding-002", name: "Text Multilingual Embedding 002", type: "embedding" },
   ],
   "vertex-partner": [
     { id: "deepseek-ai/deepseek-v3.2-maas", name: "DeepSeek V3.2 (Vertex)" },
