@@ -53,7 +53,31 @@ export async function getPricingForModel(provider, model) {
   const userPricing = await getUserPricing();
   if (provider && userPricing[provider]?.[model]) return userPricing[provider][model];
   const { getPricingForModel: resolveConst } = await import("@/shared/constants/pricing.js");
-  return resolveConst(provider, model);
+  const fromConst = resolveConst(provider, model);
+  if (fromConst) return fromConst;
+
+  // Last-resort: OpenRouter metadata cache. Lets cost tracking work for
+  // user-added passthrough models (LiteLLM/NewAPI/OpenRouter-compatible)
+  // without anyone having to manually fill in pricing.
+  try {
+    const { lookupModelMetadata } = await import("open-sse/services/openrouterSync.js");
+    const or = await lookupModelMetadata(provider, model);
+    if (or) {
+      const out = {};
+      if (or.inputPrice != null) out.input = or.inputPrice;
+      if (or.outputPrice != null) out.output = or.outputPrice;
+      if (or.cachedPrice != null) out.cached = or.cachedPrice;
+      if (or.cacheWritePrice != null) out.cache_creation = or.cacheWritePrice;
+      if (or.reasoningPrice != null) out.reasoning = or.reasoningPrice;
+      // Annotate so call sites/UI can show the data source if they care.
+      if (Object.keys(out).length) {
+        out._source = "openrouter";
+        out._sourceModelId = or.id;
+        return out;
+      }
+    }
+  } catch { /* cache miss / cold boot — silent */ }
+  return null;
 }
 
 // Atomic merge inside transaction (per-provider read-modify-write)
