@@ -52,13 +52,18 @@ export async function getPricingForModel(provider, model) {
   if (!model) return null;
   const userPricing = await getUserPricing();
   if (provider && userPricing[provider]?.[model]) return userPricing[provider][model];
+
   const { getPricingForModel: resolveConst } = await import("@/shared/constants/pricing.js");
   const fromConst = resolveConst(provider, model);
-  if (fromConst) return fromConst;
 
-  // Last-resort: OpenRouter metadata cache. Lets cost tracking work for
-  // user-added passthrough models (LiteLLM/NewAPI/OpenRouter-compatible)
-  // without anyone having to manually fill in pricing.
+  // Exact constants hit wins (curated, vendor-verified). Pattern hits are a
+  // last-resort wildcard guess — prefer OpenRouter's live data over a guess
+  // when available.
+  const isPatternGuess = fromConst?._matchType === "pattern";
+  if (fromConst && !isPatternGuess) return fromConst;
+
+  // Probe OpenRouter cache. Used both when constants miss entirely and when
+  // constants only matched via a pattern.
   try {
     const { lookupModelMetadata } = await import("open-sse/services/openrouterSync.js");
     const or = await lookupModelMetadata(provider, model);
@@ -69,7 +74,6 @@ export async function getPricingForModel(provider, model) {
       if (or.cachedPrice != null) out.cached = or.cachedPrice;
       if (or.cacheWritePrice != null) out.cache_creation = or.cacheWritePrice;
       if (or.reasoningPrice != null) out.reasoning = or.reasoningPrice;
-      // Annotate so call sites/UI can show the data source if they care.
       if (Object.keys(out).length) {
         out._source = "openrouter";
         out._sourceModelId = or.id;
@@ -77,6 +81,14 @@ export async function getPricingForModel(provider, model) {
       }
     }
   } catch { /* cache miss / cold boot — silent */ }
+
+  // OR miss — return the pattern guess (if any) so we don't regress existing
+  // behavior. Strip the annotation so call sites don't accidentally treat it
+  // as authoritative.
+  if (isPatternGuess) {
+    const { _matchType, _matchedPattern, ...clean } = fromConst;
+    return { ...clean, _source: "pattern-guess", _matchedPattern };
+  }
   return null;
 }
 

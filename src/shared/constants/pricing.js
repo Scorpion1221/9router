@@ -222,20 +222,23 @@ function matchPattern(pattern, model) {
 export function getPricingForModel(provider, model) {
   if (!model) return null;
 
-  // 1. Provider-specific override
+  // 1. Provider-specific override (exact)
   if (provider && PROVIDER_PRICING[provider]?.[model]) {
     return PROVIDER_PRICING[provider][model];
   }
 
-  // 2. Canonical model pricing (strip vendor prefix if needed: "deepseek/deepseek-chat" → "deepseek-chat")
+  // 2. Canonical model pricing (exact). Strip vendor prefix if needed:
+  // "deepseek/deepseek-chat" → "deepseek-chat".
   const baseModel = model.includes("/") ? model.split("/").pop() : model;
   if (MODEL_PRICING[baseModel]) return MODEL_PRICING[baseModel];
   if (MODEL_PRICING[model]) return MODEL_PRICING[model];
 
-  // 3. Pattern match
+  // 3. Glob pattern match — last-resort guess. Annotated so upstream resolvers
+  // (e.g. pricingRepo) can opt to prefer fresher data sources like OpenRouter
+  // over a stale wildcard guess.
   for (const { pattern, pricing } of PATTERN_PRICING) {
     if (matchPattern(pattern, baseModel) || matchPattern(pattern, model)) {
-      return pricing;
+      return { ...pricing, _matchType: "pattern", _matchedPattern: pattern };
     }
   }
 
