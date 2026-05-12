@@ -21,7 +21,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
     organization: "",
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
-  const [vertexData, setVertexData] = useState({ location: "us-central1", projectId: "" });
+  const [vertexData, setVertexData] = useState({ llmLocation: "global", embeddingLocation: "us-central1", projectId: "" });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [validating, setValidating] = useState(false);
@@ -48,9 +48,12 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         setCloudflareData({ accountId: connection.providerSpecificData.accountId || "" });
       }
       if ((connection.provider === "vertex" || connection.provider === "vertex-partner") && connection.providerSpecificData) {
+        const psd = connection.providerSpecificData;
         setVertexData({
-          location: connection.providerSpecificData.location || "us-central1",
-          projectId: connection.providerSpecificData.projectId || "",
+          // Migrate legacy `location` → both fields, but prefer new ones if set.
+          llmLocation: psd.llmLocation || psd.location || "global",
+          embeddingLocation: psd.embeddingLocation || psd.location || "us-central1",
+          projectId: psd.projectId || "",
         });
       }
       setTestResult(null);
@@ -162,7 +165,8 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       }
       if (isVertex) {
         const psd = {};
-        if (vertexData.location?.trim()) psd.location = vertexData.location.trim();
+        if (vertexData.llmLocation?.trim()) psd.llmLocation = vertexData.llmLocation.trim();
+        if (vertexData.embeddingLocation?.trim()) psd.embeddingLocation = vertexData.embeddingLocation.trim();
         if (vertexData.projectId?.trim()) psd.projectId = vertexData.projectId.trim();
         updates.providerSpecificData = psd;
       }
@@ -252,11 +256,18 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
             <h3 className="font-semibold mb-3 text-sm">Vertex AI Configuration</h3>
             <div className="flex flex-col gap-3">
               <Input
-                label="Location (region)"
-                value={vertexData.location}
-                onChange={(e) => setVertexData({ ...vertexData, location: e.target.value })}
+                label="LLM Location"
+                value={vertexData.llmLocation}
+                onChange={(e) => setVertexData({ ...vertexData, llmLocation: e.target.value })}
+                placeholder="global"
+                hint="Region used for chat / generateContent. 'global' is Google's recommended default."
+              />
+              <Input
+                label="Embedding Location"
+                value={vertexData.embeddingLocation}
+                onChange={(e) => setVertexData({ ...vertexData, embeddingLocation: e.target.value })}
                 placeholder="us-central1"
-                hint="Region must support the model. us-central1 is a safe default."
+                hint="Region used for embeddings. Must be a real region (e.g. us-central1) — 'global' does not work for embeddings."
               />
               <Input
                 label="Project ID"

@@ -58,7 +58,13 @@ export class VertexExecutor extends BaseExecutor {
 
     if (saJson) {
       // SA JSON + Bearer token: must use project-scoped path to avoid RESOURCE_PROJECT_INVALID
-      const location = credentials?.providerSpecificData?.location || "us-central1";
+      // LLM defaults to `global` (recommended by Google for generateContent and what
+      // partner endpoints already use). Falls back to legacy `location` field for
+      // backwards compat with connections created before llmLocation existed.
+      const location =
+        credentials?.providerSpecificData?.llmLocation ||
+        credentials?.providerSpecificData?.location ||
+        "global";
       let url = `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:${action}`;
       if (stream) url += "?alt=sse";
       return url;

@@ -51,7 +51,14 @@ function isSaFlow(creds) {
 }
 
 function resolveLocation(creds) {
-  return creds?.providerSpecificData?.location || "us-central1";
+  // Embedding endpoint location. `global` does NOT work for embeddings — must be
+  // a real region. Prefer the dedicated embeddingLocation field, then the legacy
+  // shared `location` field, then us-central1 as a sane default.
+  return (
+    creds?.providerSpecificData?.embeddingLocation ||
+    creds?.providerSpecificData?.location ||
+    "us-central1"
+  );
 }
 
 function buildModelBase(model, creds) {

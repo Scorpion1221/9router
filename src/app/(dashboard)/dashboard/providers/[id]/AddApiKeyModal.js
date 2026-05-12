@@ -34,7 +34,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     organization: "",
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
-  const [vertexData, setVertexData] = useState({ location: "us-central1", projectId: "" });
+  const [vertexData, setVertexData] = useState({ llmLocation: "global", embeddingLocation: "us-central1", projectId: "" });
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -59,7 +59,8 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     }
     if (isVertex) {
       const data = {};
-      if (vertexData.location?.trim()) data.location = vertexData.location.trim();
+      if (vertexData.llmLocation?.trim()) data.llmLocation = vertexData.llmLocation.trim();
+      if (vertexData.embeddingLocation?.trim()) data.embeddingLocation = vertexData.embeddingLocation.trim();
       if (vertexData.projectId?.trim()) data.projectId = vertexData.projectId.trim();
       return Object.keys(data).length ? data : undefined;
     }
@@ -303,9 +304,15 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             <h3 className="font-semibold mb-3 text-sm">Vertex AI Configuration</h3>
             <div className="flex flex-col gap-3">
               <Input
-                label="Location (region)"
-                value={vertexData.location}
-                onChange={(e) => setVertexData({ ...vertexData, location: e.target.value })}
+                label="LLM Location"
+                value={vertexData.llmLocation}
+                onChange={(e) => setVertexData({ ...vertexData, llmLocation: e.target.value })}
+                placeholder="global"
+              />
+              <Input
+                label="Embedding Location"
+                value={vertexData.embeddingLocation}
+                onChange={(e) => setVertexData({ ...vertexData, embeddingLocation: e.target.value })}
                 placeholder="us-central1"
               />
               <Input
