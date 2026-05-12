@@ -1,5 +1,6 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
+import { lookupModelMetadata } from "open-sse/services/openrouterSync.js";
 
 const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -14,7 +15,7 @@ const KIND_ENDPOINT = {
 
 const TTS_VOICES_API = new Set(["elevenlabs", "edge-tts", "deepgram", "inworld", "local-device"]);
 
-function buildInfo({ alias, providerId, model, kind, providerInfo }) {
+async function buildInfo({ alias, providerId, model, kind, providerInfo }) {
   const out = {
     id: `${alias}/${model.id}`,
     name: model.name || model.id,
@@ -36,11 +37,33 @@ function buildInfo({ alias, providerId, model, kind, providerInfo }) {
     if (cfg.maxMaxResults) out.maxResults = cfg.maxMaxResults;
     if (cfg.requiredOptions) out.required = cfg.requiredOptions;
   }
+
+  // Merge OpenRouter cache (best-effort, silent on miss).
+  // Static config wins for fields it already provides; OpenRouter fills the gaps.
+  try {
+    const or = await lookupModelMetadata(providerId, model.id);
+    if (or) {
+      if (!out.contextWindow && or.contextWindow) out.contextWindow = or.contextWindow;
+      if (or.maxOutput) out.maxOutput = or.maxOutput;
+      const pricing = {};
+      if (or.inputPrice != null) pricing.input = or.inputPrice;
+      if (or.outputPrice != null) pricing.output = or.outputPrice;
+      if (or.cachedPrice != null) pricing.cached = or.cachedPrice;
+      if (or.cacheWritePrice != null) pricing.cache_creation = or.cacheWritePrice;
+      if (or.reasoningPrice != null) pricing.reasoning = or.reasoningPrice;
+      if (or.imagePrice != null) pricing.image = or.imagePrice;
+      if (Object.keys(pricing).length) {
+        out.pricing = pricing;
+        out.pricingSource = "openrouter";
+        out.pricingModelId = or.id;
+      }
+    }
+  } catch { /* cache miss / db not ready — silent */ }
   return out;
 }
 
 // id format: "{alias}/{modelId}" - alias may also be providerId
-function lookup(fullId) {
+async function lookup(fullId) {
   if (!fullId || !fullId.includes("/")) return null;
   const slash = fullId.indexOf("/");
   const alias = fullId.slice(0, slash);
@@ -53,7 +76,7 @@ function lookup(fullId) {
   const m = list.find((x) => x.id === modelId);
   if (m) {
     const kind = m.type || "llm";
-    return buildInfo({ alias, providerId, model: m, kind, providerInfo });
+    return await buildInfo({ alias, providerId, model: m, kind, providerInfo });
   }
 
   // Sub-configs (TTS/STT/embedding only-in-config)
@@ -64,22 +87,35 @@ function lookup(fullId) {
   ];
   for (const [kind, cfg] of subs) {
     const sm = cfg?.models?.find((x) => x.id === modelId);
-    if (sm) return buildInfo({ alias, providerId, model: sm, kind, providerInfo });
+    if (sm) return await buildInfo({ alias, providerId, model: sm, kind, providerInfo });
   }
 
   // Web search/fetch — virtual model id "search" / "fetch"
   if (modelId === "search" && providerInfo?.searchConfig) {
-    return buildInfo({
+    return await buildInfo({
       alias, providerId, kind: "webSearch", providerInfo,
       model: { id: "search", name: `${providerInfo.name} Search`, params: ["query", "max_results", "country", "language", "time_range", "domain_filter", "search_type"] },
     });
   }
   if (modelId === "fetch" && providerInfo?.fetchConfig) {
-    return buildInfo({
+    return await buildInfo({
       alias, providerId, kind: "webFetch", providerInfo,
       model: { id: "fetch", name: `${providerInfo.name} Fetch`, params: ["url", "format", "max_characters"] },
     });
   }
+
+  // Unknown to static config — last-resort OpenRouter probe so user-added
+  // passthrough models (LiteLLM/NewAPI/OpenRouter-compatible) still get
+  // ctx + pricing from the cache.
+  try {
+    const or = await lookupModelMetadata(providerId, modelId);
+    if (or) {
+      return await buildInfo({
+        alias, providerId, kind: "llm", providerInfo,
+        model: { id: modelId, name: or.name },
+      });
+    }
+  } catch { /* silent */ }
   return null;
 }
 
@@ -99,7 +135,7 @@ export async function GET(request) {
       { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
     );
   }
-  const info = lookup(id);
+  const info = await lookup(id);
   if (!info) {
     return Response.json(
       { error: { message: `Model not found: ${id}`, type: "not_found" } },

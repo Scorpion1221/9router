@@ -50,6 +50,11 @@ export {
   getPricing, getPricingForModel, updatePricing, resetPricing, resetAllPricing,
 } from "./repos/pricingRepo.js";
 
+// Model metadata cache (OpenRouter sync)
+export {
+  getModelMetadataMeta, getModelMetadataById, getAllModelMetadata, replaceAllModelMetadata,
+} from "./repos/modelMetadataRepo.js";
+
 // Disabled models
 export {
   getDisabledModels, getDisabledByProvider, disableModels, enableModels,
