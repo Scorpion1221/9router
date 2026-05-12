@@ -1,0 +1,30 @@
+services:
+  9router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: 9router:local
+    container_name: 9router
+    restart: unless-stopped
+    # 修正镜像里的 server.js 路径 bug：next.config.mjs 设了
+    # outputFileTracingRoot: ".."，导致 standalone 输出到 /app/app/server.js
+    # 而 Dockerfile 的 CMD ["node","server.js"] 找的是 /app/server.js。
+    command: ["node", "app/server.js"]
+    env_file:
+      - .env
+    ports:
+      # 宿主机 20128 -> 容器 20128
+      - "20128:20128"
+    volumes:
+      # 数据库 / usage / 登录密码哈希 都存在 /app/data 下
+      - 9router-data:/app/data
+    healthcheck:
+      # 容器里没有 curl，用 node 直连 127.0.0.1 做健康检查
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:20128/', r => process.exit(r.statusCode >= 500 ? 1 : 0)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  9router-data:
