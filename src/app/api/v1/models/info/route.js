@@ -1,6 +1,20 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
-import { lookupModelMetadata } from "open-sse/services/openrouterSync.js";
+import { lookupModelMetadata, startOpenRouterSyncScheduler } from "open-sse/services/openrouterSync.js";
+
+// Lazy-boot the OpenRouter sync scheduler the first time any model info is
+// requested. Idempotent — subsequent calls return immediately.
+let _booted = false;
+function ensureScheduler() {
+  if (_booted) return;
+  _booted = true;
+  startOpenRouterSyncScheduler({
+    log: {
+      info: (tag, msg) => console.log(`[${tag}] ${msg}`),
+      warn: (tag, msg) => console.warn(`[${tag}] ${msg}`),
+    },
+  });
+}
 
 const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -127,6 +141,7 @@ export async function OPTIONS() {
 
 // GET /v1/models/info?id={alias}/{modelId} — metadata for a single model
 export async function GET(request) {
+  ensureScheduler();
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) {
