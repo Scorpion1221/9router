@@ -6,10 +6,6 @@ services:
     image: 9router:local
     container_name: 9router
     restart: unless-stopped
-    # 修正镜像里的 server.js 路径 bug：next.config.mjs 设了
-    # outputFileTracingRoot: ".."，导致 standalone 输出到 /app/app/server.js
-    # 而 Dockerfile 的 CMD ["node","server.js"] 找的是 /app/server.js。
-    command: ["node", "app/server.js"]
     env_file:
       - .env
     ports:
