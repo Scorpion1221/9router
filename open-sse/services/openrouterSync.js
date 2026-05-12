@@ -199,6 +199,22 @@ export async function lookupModelMetadata(providerId, modelId) {
     }
     return hits[0];
   }
+
+  // Last-resort: scan for OR bases that *start with* one of our probes plus a
+  // dash. Catches the case where OR carries a date-stamped variant (e.g.
+  // "qwen3.5-plus-20260420") but the user's id has no date.
+  for (const probe of probes) {
+    const matches = [];
+    for (const [base, hits] of byBase) {
+      if (base.startsWith(probe + "-")) matches.push(...hits);
+    }
+    if (!matches.length) continue;
+    if (preferred.length) {
+      const pref = matches.find((h) => preferred.includes(h.vendor));
+      if (pref) return pref;
+    }
+    return matches[0];
+  }
   return null;
 }
 
