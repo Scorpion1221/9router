@@ -138,19 +138,27 @@ const VENDOR_PREFERENCE = {
 function stripRoutingSuffix(modelId) {
   // Strip our routing variants: [1m], -vertex, -ddit, -partner
   // plus codex/9router-internal effort/mode variants that OpenRouter doesn't know about.
-  // Order matters: longest first, so "-mini-high-review" doesn't get truncated to "-review".
+  //
+  // IMPORTANT: only effort/mode tokens go in VARIANT_SUFFIXES — never base-model
+  // name fragments like "codex" or "mini" on their own (they're part of the
+  // canonical model id). The ".-review" tail is its own token; combining it
+  // with effort like "-xhigh-review" needs a single entry only when stripping
+  // both at once is shorter than two passes (it isn't — the loop handles it).
   let s = modelId.toLowerCase();
   s = s.replace(/\[[^\]]*\]/g, "");
   s = s.replace(/-(vertex|partner|ddit)$/g, "");
-  // Codex-style variant suffixes. Apply once per call (longest-first match).
+  // Effort/mode tokens. Apply repeatedly (longest-first within each pass) so
+  // combos like "-mini-high-review" peel as "-review" then "-mini-high".
   const VARIANT_SUFFIXES = [
-    "-mini-high-review", "-xhigh-review", "-high-review", "-low-review",
-    "-none-review", "-spark-review", "-codex-review", "-mini-review",
     "-mini-high", "-xhigh", "-high", "-low", "-none", "-spark",
     "-review", "-image",
   ];
-  for (const suf of VARIANT_SUFFIXES) {
-    if (s.endsWith(suf)) { s = s.slice(0, -suf.length); break; }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const suf of VARIANT_SUFFIXES) {
+      if (s.endsWith(suf)) { s = s.slice(0, -suf.length); changed = true; break; }
+    }
   }
   return s;
 }
