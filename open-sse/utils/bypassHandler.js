@@ -215,6 +215,7 @@ function createStreamingResponse(sourceFormat, model, text) {
     response: new Response(translatedChunks.join(""), {
       headers: {
         "Content-Type": "text/event-stream",
+      "X-Accel-Buffering": "no",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
         "Access-Control-Allow-Origin": "*"

@@ -72,6 +72,7 @@ export async function GET() {
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
+      "X-Accel-Buffering": "no",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     },

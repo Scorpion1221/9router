@@ -253,6 +253,7 @@ function transformOpenAISSEToGeminiSSE(upstreamResponse, model) {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream",
+      "X-Accel-Buffering": "no",
       "Cache-Control": "no-cache",
       "Access-Control-Allow-Origin": "*",
     },

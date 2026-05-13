@@ -89,6 +89,7 @@ export async function handleResponsesCore({ body, modelInfo, credentials, log, o
         status: 200,
         headers: {
           "Content-Type": "text/event-stream",
+      "X-Accel-Buffering": "no",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
           "Access-Control-Allow-Origin": "*"

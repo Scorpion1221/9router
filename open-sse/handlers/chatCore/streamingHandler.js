@@ -9,7 +9,12 @@ const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
   "Connection": "keep-alive",
-  "Access-Control-Allow-Origin": "*"
+  "Access-Control-Allow-Origin": "*",
+  // Tell nginx (and other reverse proxies that honor this header) to skip
+  // response buffering for SSE. Without it nginx with `proxy_buffering on`
+  // will hold the entire stream until the upstream finishes — defeating
+  // the whole point of streaming.
+  "X-Accel-Buffering": "no",
 };
 
 /**

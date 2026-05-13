@@ -47,6 +47,7 @@ export async function POST(request) {
     return new Response(response.body, {
       headers: {
         "Content-Type": "text/event-stream",
+      "X-Accel-Buffering": "no",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive"
       }

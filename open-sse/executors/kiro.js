@@ -372,6 +372,7 @@ export class KiroExecutor extends BaseExecutor {
       statusText: response.statusText,
       headers: {
         "Content-Type": "text/event-stream",
+      "X-Accel-Buffering": "no",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive"
       }
