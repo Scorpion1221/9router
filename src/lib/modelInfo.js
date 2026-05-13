@@ -159,6 +159,10 @@ const KIND_TO_LITELLM_MODE = {
 
 export function toLiteLLMEntry(info) {
   if (!info) return null;
+  // 9router stores pricing as USD per *million* tokens (see openrouterSync.js
+  // `priceToPerMillion`). LiteLLM's protocol expects USD per *single* token,
+  // so divide here at the boundary.
+  const perToken = (v) => (typeof v === "number" ? v / 1_000_000 : undefined);
   const mi = {
     id: info.id,
     mode: KIND_TO_LITELLM_MODE[info.kind] || "chat",
@@ -169,11 +173,11 @@ export function toLiteLLMEntry(info) {
   }
   if (info.maxOutput) mi.max_output_tokens = info.maxOutput;
   if (info.pricing) {
-    if (info.pricing.input != null) mi.input_cost_per_token = info.pricing.input;
-    if (info.pricing.output != null) mi.output_cost_per_token = info.pricing.output;
-    if (info.pricing.cached != null) mi.cache_read_input_token_cost = info.pricing.cached;
-    if (info.pricing.cache_creation != null) mi.cache_creation_input_token_cost = info.pricing.cache_creation;
-    if (info.pricing.image != null) mi.input_cost_per_image = info.pricing.image;
+    if (info.pricing.input != null) mi.input_cost_per_token = perToken(info.pricing.input);
+    if (info.pricing.output != null) mi.output_cost_per_token = perToken(info.pricing.output);
+    if (info.pricing.cached != null) mi.cache_read_input_token_cost = perToken(info.pricing.cached);
+    if (info.pricing.cache_creation != null) mi.cache_creation_input_token_cost = perToken(info.pricing.cache_creation);
+    if (info.pricing.image != null) mi.input_cost_per_image = perToken(info.pricing.image);
   }
   if (info.pricingSource) mi.pricing_source = info.pricingSource;
   if (info.dimensions) mi.output_vector_size = info.dimensions;
