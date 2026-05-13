@@ -245,13 +245,13 @@ export const PROVIDER_MODELS = {
     { id: "dall-e-2", name: "DALL-E 2", type: "image", params: ["n", "size", "response_format"] },
   ],
   azure: [
-    // Azure OpenAI image generation. The model id here maps to the Azure
-    // deployment name unless the connection overrides `deployment` in its
-    // providerSpecificData (in which case deployment wins). Endpoint +
-    // api-version come from connection config — see imageProviders/azure.js.
+    // Azure OpenAI image generation. The model id here is just a label —
+    // actual routing uses the deployment name from the connection's
+    // providerSpecificData.deployment (set when adding the connection).
+    // gpt-image-2 is the only Azure image model surfaced today; if you
+    // deploy others (dall-e-3, gpt-image-1) just set their deployment
+    // name in the connection and switch via the deployment field.
     { id: "gpt-image-2", name: "GPT Image 2 (Azure)", type: "image", params: ["n", "size", "quality", "response_format"] },
-    { id: "gpt-image-1", name: "GPT Image 1 (Azure)", type: "image", params: ["n", "size", "quality", "response_format"] },
-    { id: "dall-e-3", name: "DALL-E 3 (Azure)", type: "image", params: ["size", "quality", "style", "response_format"] },
   ],
   anthropic: [
     { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4" },

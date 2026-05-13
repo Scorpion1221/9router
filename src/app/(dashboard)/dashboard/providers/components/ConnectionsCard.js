@@ -201,6 +201,10 @@ ConnectionRow.propTypes = {
 function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, onClose }) {
   const NONE = "__none__";
   const [formData, setFormData] = useState({ name: "", apiKey: "", priority: 1, proxyPoolId: NONE });
+  // Provider-specific config (Azure: endpoint/deployment/apiVersion/organization).
+  // Kept separate from formData so the existing key-value flow stays untouched.
+  const isAzure = provider === "azure";
+  const [azureData, setAzureData] = useState({ azureEndpoint: "", deployment: "", apiVersion: "2024-10-01-preview", organization: "" });
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -211,7 +215,11 @@ function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, on
       const res = await fetch("/api/providers/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, apiKey: formData.apiKey }),
+        body: JSON.stringify({
+          provider,
+          apiKey: formData.apiKey,
+          ...(isAzure ? { providerSpecificData: azureData } : {}),
+        }),
       });
       const data = await res.json();
       setValidationResult(data.valid ? "success" : "failed");
@@ -221,6 +229,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, on
 
   const handleSubmit = async () => {
     if (!provider || !formData.apiKey) return;
+    if (isAzure && (!azureData.azureEndpoint || !azureData.deployment)) return;
     setSaving(true);
     try {
       let isValid = false;
@@ -229,7 +238,11 @@ function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, on
         const res = await fetch("/api/providers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey }),
+          body: JSON.stringify({
+            provider,
+            apiKey: formData.apiKey,
+            ...(isAzure ? { providerSpecificData: azureData } : {}),
+          }),
         });
         const data = await res.json();
         isValid = !!data.valid;
@@ -242,6 +255,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, on
         priority: formData.priority,
         proxyPoolId: formData.proxyPoolId === NONE ? null : formData.proxyPoolId,
         testStatus: isValid ? "active" : "unknown",
+        ...(isAzure ? { providerSpecificData: azureData } : {}),
       });
     } finally { setSaving(false); }
   };
@@ -271,6 +285,29 @@ function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, on
             {validationResult === "success" ? "Valid" : "Invalid"}
           </Badge>
         )}
+        {isAzure && (
+          <div className="bg-sidebar/50 p-4 rounded-lg border border-accent/20">
+            <h3 className="font-semibold mb-3 text-sm">Azure OpenAI Configuration</h3>
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">Azure Endpoint *</label>
+                <input className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={azureData.azureEndpoint} onChange={(e) => setAzureData({ ...azureData, azureEndpoint: e.target.value })} placeholder="https://your-resource.openai.azure.com" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">Deployment Name *</label>
+                <input className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={azureData.deployment} onChange={(e) => setAzureData({ ...azureData, deployment: e.target.value })} placeholder="gpt-image-2" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">API Version</label>
+                <input className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={azureData.apiVersion} onChange={(e) => setAzureData({ ...azureData, apiVersion: e.target.value })} placeholder="2024-10-01-preview" />
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">Organization (optional)</label>
+                <input className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={azureData.organization} onChange={(e) => setAzureData({ ...azureData, organization: e.target.value })} placeholder="Organization ID" />
+              </div>
+            </div>
+          </div>
+        )}
         <div>
           <label className="text-xs text-text-muted mb-1 block">Priority</label>
           <input type="number" className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={formData.priority} onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })} />
@@ -278,7 +315,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, on
         <Select label="Proxy Pool" value={formData.proxyPoolId} onChange={(e) => setFormData({ ...formData, proxyPoolId: e.target.value })}
           options={[{ value: NONE, label: "None" }, ...(proxyPools || []).map((p) => ({ value: p.id, label: p.name }))]} />
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={!formData.name || !formData.apiKey || saving}>
+          <Button onClick={handleSubmit} fullWidth disabled={!formData.name || !formData.apiKey || saving || (isAzure && (!azureData.azureEndpoint || !azureData.deployment))}>
             {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
