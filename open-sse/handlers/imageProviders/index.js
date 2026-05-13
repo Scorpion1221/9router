@@ -11,6 +11,7 @@ import stabilityAi from "./stabilityAi.js";
 import blackForestLabs from "./blackForestLabs.js";
 import runwayml from "./runwayml.js";
 import cloudflareAi from "./cloudflareAi.js";
+import azure from "./azure.js";
 
 const ADAPTERS = {
   openai: createOpenAIAdapter("openai"),
@@ -28,6 +29,7 @@ const ADAPTERS = {
   "black-forest-labs": blackForestLabs,
   runwayml,
   "cloudflare-ai": cloudflareAi,
+  azure,
 };
 
 export function getImageAdapter(provider) {
