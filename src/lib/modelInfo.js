@@ -10,6 +10,7 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { lookupModelMetadata } from "open-sse/services/openrouterSync.js";
+import { getComboByName } from "@/lib/db";
 
 export const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -77,9 +78,50 @@ export async function buildInfo({ alias, providerId, model, kind, providerInfo }
 /**
  * Resolve a single full model id ("{alias}/{model}") to its info object,
  * or null if unknown to both static config and OpenRouter cache.
+ *
+ * Combos are resolved by recursing into their member models and taking the
+ * MIN context window (conservative — if the combo routes to a 200K member
+ * a caller that planned for 1M would 413), and the FIRST member's pricing
+ * (best-effort estimate; actual cost depends on which member is chosen).
  */
 export async function resolveModelInfo(fullId) {
-  if (!fullId || !fullId.includes("/")) return null;
+  if (!fullId) return null;
+
+  // Combo lookup: combos are stored by name (no slash), and dispatch to one of
+  // their member models at request time. Recurse into members for metadata.
+  if (!fullId.includes("/")) {
+    try {
+      const combo = await getComboByName(fullId);
+      if (combo && Array.isArray(combo.models) && combo.models.length > 0) {
+        const memberInfos = [];
+        for (const m of combo.models) {
+          const info = await resolveModelInfo(m);
+          if (info) memberInfos.push(info);
+        }
+        if (memberInfos.length === 0) return null;
+        const ctxs = memberInfos.map((i) => i.contextWindow).filter(Boolean);
+        const outs = memberInfos.map((i) => i.maxOutput).filter(Boolean);
+        const firstPriced = memberInfos.find((i) => i.pricing);
+        const out = {
+          id: fullId,
+          name: fullId,
+          kind: combo.kind || "llm",
+          owned_by: "combo",
+          endpoint: KIND_ENDPOINT[combo.kind || "llm"] || null,
+          comboMembers: combo.models,
+        };
+        if (ctxs.length) out.contextWindow = Math.min(...ctxs);
+        if (outs.length) out.maxOutput = Math.min(...outs);
+        if (firstPriced) {
+          out.pricing = firstPriced.pricing;
+          out.pricingSource = `combo-member:${firstPriced.id}`;
+        }
+        return out;
+      }
+    } catch { /* db unavailable — fall through to null */ }
+    return null;
+  }
+
   const slash = fullId.indexOf("/");
   const alias = fullId.slice(0, slash);
   const modelId = fullId.slice(slash + 1);
