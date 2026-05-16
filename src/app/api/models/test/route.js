@@ -9,6 +9,8 @@ import { clearAccountError } from "@/sse/services/auth";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { handleImageGenerationCore } from "open-sse/handlers/imageGenerationCore.js";
+import { handleTtsCore } from "open-sse/handlers/ttsCore.js";
+import { handleSttCore } from "open-sse/handlers/sttCore.js";
 import * as log from "@/sse/utils/logger";
 
 const CLI_TOKEN_SALT = "9r-cli-auth";
@@ -93,6 +95,28 @@ async function runDirectTest({ connectionId, model, kind }) {
         }),
         onRequestSuccess: async () => clearAccountError(connectionId, credentials, bareModel),
       });
+    } else if (kind === "tts") {
+      // For TTS the "model" id from the Models card is the raw OpenAI model name
+      // (tts-1, tts-1-hd, gpt-4o-mini-tts). The OpenAI TTS adapter accepts that
+      // single-segment form and picks a default voice. Other providers' adapters
+      // also tolerate model-only input. Synthesize one short string and verify
+      // we got binary audio back.
+      result = await handleTtsCore({
+        provider,
+        model: bareModel,
+        input: "test",
+        credentials,
+        responseFormat: "mp3",
+        language: "",
+      });
+    } else if (kind === "stt") {
+      // STT requires a real audio file to round-trip — there's no cheap ping. Tell
+      // the user to use the Speech-to-Text Example card with a sample file instead.
+      return NextResponse.json({
+        ok: false,
+        status: 400,
+        error: "STT ping not supported — use the Speech-to-Text Example card with an audio file.",
+      });
     } else {
       // chat
       result = await handleChatCore({
@@ -123,9 +147,21 @@ async function runDirectTest({ connectionId, model, kind }) {
     // result.response is a Response object — read body to validate
     const resp = result.response;
     const status = resp.status;
-    const rawText = await resp.text().catch(() => "");
+    const respCType = resp.headers?.get?.("content-type") || "";
+
+    // For binary responses (TTS audio), don't try to JSON-parse.
+    const isBinary = respCType.startsWith("audio/") || respCType.startsWith("image/") || respCType === "application/octet-stream";
+    let rawText = "";
     let parsed = null;
-    try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+    let bodySize = 0;
+    if (isBinary) {
+      const buf = await resp.arrayBuffer().catch(() => null);
+      bodySize = buf?.byteLength || 0;
+    } else {
+      rawText = await resp.text().catch(() => "");
+      try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+      bodySize = rawText.length;
+    }
 
     if (status >= 400) {
       const detail = parsed?.error?.message || parsed?.error || rawText;
@@ -139,6 +175,11 @@ async function runDirectTest({ connectionId, model, kind }) {
     } else if (kind === "image") {
       const hasImage = Array.isArray(parsed?.data) && parsed.data.length > 0 && (parsed.data[0]?.url || parsed.data[0]?.b64_json);
       if (!hasImage) return NextResponse.json({ ok: false, latencyMs, status, error: "Provider returned no image data" });
+    } else if (kind === "tts") {
+      // Accept either binary audio (>= 100 bytes) or a JSON envelope { audio, format }.
+      const okBinary = isBinary && bodySize >= 100;
+      const okJson = !isBinary && parsed?.audio && typeof parsed.audio === "string";
+      if (!okBinary && !okJson) return NextResponse.json({ ok: false, latencyMs, status, error: "Provider returned no audio data" });
     } else {
       const hasChoices = Array.isArray(parsed?.choices) && parsed.choices.length > 0;
       if (!hasChoices) return NextResponse.json({ ok: false, latencyMs, status, error: "Provider returned no completion choices" });

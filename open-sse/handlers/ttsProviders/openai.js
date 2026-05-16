@@ -1,8 +1,16 @@
-// OpenAI TTS — model format: "tts-model/voice"
+// OpenAI TTS — model format:
+//   "<tts-model>/<voice>"        → e.g. "gpt-4o-mini-tts/alloy"
+//   "<voice>"                    → e.g. "alloy"  (defaults to gpt-4o-mini-tts)
+//   "<tts-model>"                → e.g. "tts-1"  (use this model + default voice "alloy")
 import { Buffer } from "node:buffer";
 
+// Known OpenAI TTS model ids. Used to disambiguate single-segment inputs:
+// `tts-1` is a model, `alloy` is a voice. Both arrive as `model` in the
+// canonical (model-only) form like `openai/tts-1`.
+const TTS_MODELS = new Set(["tts-1", "tts-1-hd", "gpt-4o-mini-tts"]);
+
 export default {
-  async synthesize(text, model, credentials) {
+  async synthesize(text, model, credentials, _responseFormat, _opts) {
     if (!credentials?.apiKey) throw new Error("No OpenAI API key configured");
 
     let ttsModel = "gpt-4o-mini-tts";
@@ -11,7 +19,12 @@ export default {
       const parts = model.split("/");
       if (parts.length === 2) [ttsModel, voice] = parts;
     } else if (model) {
-      voice = model;
+      // Single segment: decide whether it's a model or a voice.
+      if (TTS_MODELS.has(model)) {
+        ttsModel = model; // keep default voice
+      } else {
+        voice = model; // legacy: treat as voice
+      }
     }
 
     const baseUrl = (credentials.baseUrl || "https://api.openai.com").replace(/\/+$/, "");
