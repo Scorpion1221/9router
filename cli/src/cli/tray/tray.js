@@ -140,31 +140,69 @@ function initWindowsTray(options) {
 
 /**
  * macOS/Linux tray via systray binary
+ *
+ * Prefers `systray2` (active fork of `systray`, ships newer
+ * getlantern/systray-portable binaries that work on macOS 14+ and Apple
+ * Silicon under Rosetta). Falls back to legacy `systray@1.0.5` if systray2
+ * is not available, though that binary's Mach-O headers are rejected by
+ * modern dyld and the icon will not appear.
  */
 function resolveSystray() {
-  // Try local first (dev), then runtime dir (production lazy install)
-  try {
-    return require("systray").default;
-  } catch (e) {}
+  let runtimeDir = null;
   try {
     const { getRuntimeNodeModules } = require("../../../hooks/sqliteRuntime");
-    const systrayPath = path.join(getRuntimeNodeModules(), "systray");
-    return require(systrayPath).default;
-  } catch (e) {
-    return null;
+    runtimeDir = getRuntimeNodeModules();
+  } catch (e) {}
+
+  // 1) systray2 in runtime dir (where ensureTrayRuntime installs it)
+  if (runtimeDir) {
+    try { return { mod: require(path.join(runtimeDir, "systray2")).default, isV2: true }; } catch (e) {}
   }
+  // 2) systray2 resolvable from the package's own node_modules / NODE_PATH
+  try { return { mod: require("systray2").default, isV2: true }; } catch (e) {}
+  // 3) Legacy systray fallback (unlikely to render on modern macOS)
+  try { return { mod: require("systray").default, isV2: false }; } catch (e) {}
+  if (runtimeDir) {
+    try { return { mod: require(path.join(runtimeDir, "systray")).default, isV2: false }; } catch (e) {}
+  }
+  return null;
+}
+
+function chmodTrayBin(pkgName) {
+  // systray2's npm tarball occasionally lands without +x on the bundled Go
+  // binary (observed on macOS). spawn() then fails with EACCES. Best-effort
+  // chmod on every init avoids a hard-to-diagnose silent tray failure.
+  try {
+    const { getRuntimeNodeModules } = require("../../../hooks/sqliteRuntime");
+    const binName = process.platform === "darwin" ? "tray_darwin_release" : "tray_linux_release";
+    const candidates = [
+      path.join(getRuntimeNodeModules(), pkgName, "traybin", binName),
+      path.join(__dirname, "..", "..", "..", "node_modules", pkgName, "traybin", binName)
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+    }
+  } catch (e) {}
 }
 
 function initUnixTray(options) {
   const { port } = options;
   try {
-    const SysTray = resolveSystray();
-    if (!SysTray) return null;
+    const resolved = resolveSystray();
+    if (!resolved) return null;
+    const { mod: SysTray, isV2 } = resolved;
+
+    chmodTrayBin(isV2 ? "systray2" : "systray");
+
     const autostartEnabled = getAutostartEnabled();
     const items = buildMenuItems(port, autostartEnabled);
 
     const menu = {
       icon: getIconBase64(),
+      // The bundled icon.png is a full-color RGBA logo. Don't mark it as a
+      // template icon: macOS would then render it as a solid white square
+      // because template mode only uses the alpha channel.
+      isTemplateIcon: false,
       title: "",
       tooltip: `9Router - Port ${port}`,
       items
@@ -187,29 +225,77 @@ function initUnixTray(options) {
       });
     });
 
-    trayInstance.onReady(() => {});
-    trayInstance.onError(() => {});
+    if (isV2) {
+      // systray2 exposes a ready() promise instead of onReady/onError. Surface
+      // failures (binary crash, EACCES, etc.) so users can see why the icon
+      // didn't appear instead of getting a misleading "running in tray" log.
+      trayInstance.ready().catch((err) => {
+        process.stderr.write(`[9router] tray failed to start: ${err && err.message ? err.message : err}\n`);
+      });
+    } else {
+      trayInstance.onReady(() => {});
+      trayInstance.onError(() => {});
+    }
 
     return trayInstance;
   } catch (err) {
+    process.stderr.write(`[9router] tray init error: ${err.message}\n`);
     return null;
   }
 }
 
 /**
- * Kill/close system tray gracefully
+ * Kill tray, wait Go binary fully exit (returns Promise).
+ * Critical for hide-to-tray: macOS must release NSStatusItem before bgProcess
+ * spawns a new tray, otherwise the new icon silently fails to register.
  */
 function killTray() {
   const instance = trayInstance;
   const wasWin = isWinTray;
   trayInstance = null;
+  if (!instance) return Promise.resolve();
 
-  if (instance) {
-    try {
-      if (wasWin) instance.kill();
-      else instance.kill(true);
-    } catch (e) {}
+  if (wasWin) {
+    try { instance.kill(); } catch (e) {}
+    return Promise.resolve();
   }
+
+  // Unix: get the Go tray child process handle.
+  let proc = null;
+  try {
+    proc = instance._process || (typeof instance.process === "function" ? instance.process() : null);
+  } catch (e) {}
+
+  // Graceful shutdown: send {type:"exit"} via IPC so the Go binary can call
+  // systray.Quit() and release NSStatusItem. SIGKILL leaves a ghost icon on
+  // the macOS menubar until logout, causing duplicate icons after re-spawn.
+  const gracefulQuit = () => { try { instance.kill(true); } catch (e) {} };
+  const closeIpc = () => { try { instance.kill(false); } catch (e) {} };
+
+  if (!proc || !proc.pid) {
+    gracefulQuit();
+    closeIpc();
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (done) return; done = true; closeIpc(); resolve(); };
+
+    proc.once("exit", finish);
+    gracefulQuit();
+
+    // Escalate: SIGTERM after 800ms, SIGKILL after 1600ms if still alive.
+    setTimeout(() => { try { process.kill(proc.pid, 0); proc.kill("SIGTERM"); } catch (e) {} }, 800);
+    setTimeout(() => { try { process.kill(proc.pid, 0); proc.kill("SIGKILL"); } catch (e) {} }, 1600);
+
+    // Fallback poll in case "exit" never fires (detached child, pipe closed)
+    const deadline = Date.now() + 3000;
+    const poll = setInterval(() => {
+      try { process.kill(proc.pid, 0); } catch { clearInterval(poll); finish(); return; }
+      if (Date.now() > deadline) { clearInterval(poll); finish(); }
+    }, 50);
+  });
 }
 
 /**
