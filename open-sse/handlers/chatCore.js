@@ -57,7 +57,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   const clientRequestedStreaming = body.stream === true || sourceFormat === FORMATS.ANTIGRAVITY || sourceFormat === FORMATS.GEMINI || sourceFormat === FORMATS.GEMINI_CLI;
-  const providerRequiresStreaming = provider === "openai" || provider === "codex" || provider === "commandcode";
+  // Some providers have no JSON endpoint (Codex CLI, commandcode) — must upgrade to stream.
+  // For openai (standard /chat/completions) the JSON endpoint works fine; only upgrade when
+  // the client didn't explicitly opt out. Explicit `body.stream === false` is honored.
+  const providerNoJsonEndpoint = provider === "codex" || provider === "commandcode";
+  const providerRequiresStreaming = providerNoJsonEndpoint || (provider === "openai" && body.stream !== false);
   let stream = providerRequiresStreaming ? true : (body.stream !== false);
 
   // DeepSeek-TUI: interactive TUI panel sends stream:true and needs SSE.
@@ -265,7 +269,18 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return result;
   }
 
-  // Streaming response
+  // Streaming response — but defensively check the upstream actually returned SSE.
+  // Some openai-compatible upstreams ignore `stream:true` and return JSON anyway;
+  // forwarding that to streamingHandler appends `data: [DONE]` to a JSON body and
+  // confuses clients. Fall back to JSON handling.
+  const respCType = providerResponse.headers.get("content-type") || "";
+  if (!respCType.includes("text/event-stream") && respCType.includes("application/json")) {
+    log?.debug?.("FORMAT", `Upstream returned ${respCType} despite stream=true — falling back to JSON`);
+    const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, reqLogger, toolNameMap, trackDone, appendLog });
+    streamController.handleComplete();
+    return result;
+  }
+
   const { onStreamComplete } = buildOnStreamComplete({ ...sharedCtx });
   return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete });
 }
