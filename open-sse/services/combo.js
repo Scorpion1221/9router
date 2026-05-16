@@ -4,6 +4,7 @@
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
+import { probeFirstContent, isStreamingSseResponse } from "../utils/streamProbe.js";
 
 /**
  * Track rotation state per combo (for round-robin strategy)
@@ -103,9 +104,14 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @param {string} [options.comboName] - Name of the combo (for round-robin tracking)
  * @param {string} [options.comboStrategy] - Strategy: "fallback" or "round-robin"
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
+ * @param {boolean} [options.probeStreamFirstByte=true] - When upstream returns 200 + SSE,
+ *   peek the first non-noise chunk before committing. Empty / aborted streams
+ *   fall back to the next combo model. Set false to restore legacy behavior
+ *   (treat any 200 as success). Non-SSE responses are never probed.
+ * @param {number} [options.probeTimeoutMs] - Override first-byte probe timeout (default 8000ms).
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1 }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, probeStreamFirstByte = true, probeTimeoutMs }) {
   // Apply rotation strategy if enabled
   const rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
   
@@ -120,8 +126,26 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     try {
       const result = await handleSingleModel(body, modelStr);
       
-      // Success (2xx) - return response
+      // Success (2xx) - but for streaming SSE responses, peek the first chunk
+      // before committing. Otherwise an upstream that returns 200 then aborts
+      // mid-stream with zero content would be forwarded to the client as an
+      // empty body and combo would have already moved on.
       if (result.ok) {
+        if (probeStreamFirstByte && isStreamingSseResponse(result)) {
+          const probe = await probeFirstContent(result, probeTimeoutMs ? { timeoutMs: probeTimeoutMs } : undefined);
+          if (probe.ok) {
+            log.info("COMBO", `Model ${modelStr} succeeded`);
+            return probe.wrapped;
+          }
+          // First-byte probe failed — treat like an error for fallback purposes.
+          // The upstream socket has been cancelled by the probe, so we're free
+          // to retry the next model. Don't bill account fallback for this; the
+          // upstream returned 200, the failure is a stream-level abort.
+          lastError = `stream produced no content before first-byte deadline (${probe.reason})`;
+          if (!lastStatus) lastStatus = 502;
+          log.warn("COMBO", `Model ${modelStr} 200 but stream empty (${probe.reason}), trying next`);
+          continue;
+        }
         log.info("COMBO", `Model ${modelStr} succeeded`);
         return result;
       }
