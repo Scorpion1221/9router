@@ -7,6 +7,7 @@ import {
 } from "@/shared/constants/providers";
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { resolveModelInfo } from "@/lib/modelInfo";
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
@@ -383,12 +384,57 @@ export async function OPTIONS() {
 }
 
 /**
+ * Enrich /v1/models entries with OpenRouter-compatible extension fields
+ * (context_length, max_completion_tokens, pricing) so OpenAI-shape clients
+ * that scan the list for context windows pick it up without configuration.
+ *
+ * Field names follow OpenRouter's convention since multiple clients (Hermes,
+ * etc.) already understand it:
+ *   context_length         — total context window (input + output combined)
+ *   max_completion_tokens  — max output tokens (per-call cap)
+ *   pricing.prompt         — USD per *input* token (string, OpenRouter style)
+ *   pricing.completion     — USD per *output* token (string)
+ *
+ * Missing fields are simply omitted (no nulls) so clients that gate on
+ * presence don't trip. Failures are silent — the model still surfaces with
+ * its base id/object/owned_by.
+ */
+async function enrichWithMetadata(models) {
+  return Promise.all(models.map(async (m) => {
+    try {
+      const info = await resolveModelInfo(m.id);
+      if (!info) return m;
+      const out = { ...m };
+      if (info.contextWindow) out.context_length = info.contextWindow;
+      if (info.maxOutput) out.max_completion_tokens = info.maxOutput;
+      if (info.pricing) {
+        // Pricing in info.pricing is USD/M tokens (9router internal); LiteLLM's
+        // /v1/model/info divides by 1e6 at the boundary, but OpenRouter's
+        // /v1/models uses string-encoded per-token decimals — match that.
+        const perToken = (v) => (typeof v === "number" ? (v / 1_000_000).toString() : undefined);
+        const pricing = {};
+        if (info.pricing.input != null) pricing.prompt = perToken(info.pricing.input);
+        if (info.pricing.output != null) pricing.completion = perToken(info.pricing.output);
+        if (info.pricing.image != null) pricing.image = perToken(info.pricing.image);
+        if (info.pricing.cached != null) pricing.input_cache_read = perToken(info.pricing.cached);
+        if (info.pricing.cache_creation != null) pricing.input_cache_write = perToken(info.pricing.cache_creation);
+        if (Object.keys(pricing).length) out.pricing = pricing;
+      }
+      return out;
+    } catch {
+      return m;
+    }
+  }));
+}
+
+/**
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
 export async function GET() {
   try {
-    const data = await buildModelsList([LLM_KIND]);
+    const baseData = await buildModelsList([LLM_KIND]);
+    const data = await enrichWithMetadata(baseData);
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

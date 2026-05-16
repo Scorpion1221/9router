@@ -1,4 +1,5 @@
 import { buildModelsList } from "../route.js";
+import { resolveModelInfo } from "@/lib/modelInfo";
 
 // URL slug → service kind(s). `web` covers both webSearch and webFetch.
 const KIND_SLUG_MAP = {
@@ -41,7 +42,29 @@ export async function GET(_request, { params }) {
       );
     }
 
-    const data = await buildModelsList(kindFilter);
+    const baseData = await buildModelsList(kindFilter);
+    // Enrich with OpenRouter-style extension fields (context_length,
+    // max_completion_tokens, pricing) — same shape as /v1/models.
+    const data = await Promise.all(baseData.map(async (m) => {
+      try {
+        const info = await resolveModelInfo(m.id);
+        if (!info) return m;
+        const out = { ...m };
+        if (info.contextWindow) out.context_length = info.contextWindow;
+        if (info.maxOutput) out.max_completion_tokens = info.maxOutput;
+        if (info.pricing) {
+          const perToken = (v) => (typeof v === "number" ? (v / 1_000_000).toString() : undefined);
+          const pricing = {};
+          if (info.pricing.input != null) pricing.prompt = perToken(info.pricing.input);
+          if (info.pricing.output != null) pricing.completion = perToken(info.pricing.output);
+          if (info.pricing.image != null) pricing.image = perToken(info.pricing.image);
+          if (info.pricing.cached != null) pricing.input_cache_read = perToken(info.pricing.cached);
+          if (info.pricing.cache_creation != null) pricing.input_cache_write = perToken(info.pricing.cache_creation);
+          if (Object.keys(pricing).length) out.pricing = pricing;
+        }
+        return out;
+      } catch { return m; }
+    }));
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });
