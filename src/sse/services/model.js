@@ -1,6 +1,7 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getComboByName, getProviderNodes } from "@/lib/localDb";
+import { getModelAliases, getComboByName, getProviderNodes, getProviderConnections } from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
+import { AI_PROVIDERS } from "@/shared/constants/providers.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -25,12 +26,38 @@ export async function resolveModelAlias(alias) {
 }
 
 /**
+ * Check whether a real provider id (e.g. "openai") has any active connection.
+ * Used to decide whether prefix-based providerNode matching should defer to
+ * the real provider when their identifiers collide.
+ */
+async function hasActiveRealConnection(providerId) {
+  if (!providerId) return false;
+  try {
+    const conns = await getProviderConnections({ provider: providerId, isActive: true });
+    return Array.isArray(conns) && conns.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get full model info (parse or resolve)
  */
 export async function getModelInfo(modelStr) {
   const parsed = parseModel(modelStr);
 
   if (!parsed.isAlias) {
+    // PRIORITY: if the alias (e.g. "openai") is itself a real provider AND that
+    // provider has active connections, prefer it over an openai-compatible
+    // providerNode that happens to use the same prefix. Without this, a
+    // distributor configured with prefix="openai" intercepts ALL `openai/*`
+    // requests and starves the real OpenAI connection of traffic — including
+    // TTS / STT / image kinds the distributor doesn't even support.
+    const aliasIsRealProvider = parsed.providerAlias && AI_PROVIDERS[parsed.providerAlias];
+    if (aliasIsRealProvider && await hasActiveRealConnection(parsed.providerAlias)) {
+      return { provider: parsed.providerAlias, model: parsed.model };
+    }
+
     // Always check provider-node prefix matching using original input first
     const openaiNodes = await getProviderNodes({ type: "openai-compatible" });
     const matchedOpenAI = openaiNodes.find((node) => node.prefix === parsed.providerAlias);

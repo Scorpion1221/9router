@@ -252,6 +252,7 @@ export const PROVIDER_MODELS = {
     { id: "gpt-4o-mini-transcribe", name: "GPT-4o Mini Transcribe", type: "stt", params: ["language", "response_format", "temperature", "prompt"] },
     // Image models
     { id: "gpt-image-1", name: "GPT Image 1", type: "image", params: ["n", "size", "quality", "response_format"] },
+    { id: "gpt-image-2", name: "GPT Image 2", type: "image", params: ["n", "size", "quality", "response_format"] },
     { id: "dall-e-3", name: "DALL-E 3", type: "image", params: ["size", "quality", "style", "response_format"] },
     { id: "dall-e-2", name: "DALL-E 2", type: "image", params: ["n", "size", "response_format"] },
   ],
