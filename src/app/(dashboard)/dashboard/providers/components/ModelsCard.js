@@ -187,10 +187,17 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
     if (testingModelId) return;
     setTestingModelId(modelId);
     try {
+      // Use first active connection so the test goes through THIS provider's credentials,
+      // not whatever random connection global routing picks first.
+      const activeConn = connections.find((c) => c.isActive !== false);
       const res = await fetch("/api/models/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: `${providerAlias}/${modelId}`, kind: kindFilter }),
+        body: JSON.stringify({
+          model: `${providerAlias}/${modelId}`,
+          kind: kindFilter,
+          connectionId: activeConn?.id,
+        }),
       });
       const data = await res.json();
       setModelTestResults((prev) => ({ ...prev, [modelId]: data.ok ? "ok" : "error" }));

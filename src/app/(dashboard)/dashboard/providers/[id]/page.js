@@ -655,10 +655,12 @@ export default function ProviderDetailPage() {
     if (testingModelId) return;
     setTestingModelId(modelId);
     try {
+      // Pin to first active connection of this provider — bypasses global routing.
+      const activeConn = connections.find((c) => c.isActive !== false);
       const res = await fetch("/api/models/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: `${providerStorageAlias}/${modelId}` }),
+        body: JSON.stringify({ model: `${providerStorageAlias}/${modelId}`, connectionId: activeConn?.id }),
       });
       const data = await res.json();
       setModelTestResults((prev) => ({ ...prev, [modelId]: data.ok ? "ok" : "error" }));
