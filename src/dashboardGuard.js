@@ -29,6 +29,9 @@ const PUBLIC_API_PATHS = [
   "/api/auth/oidc",
   "/api/version",
   "/api/settings/require-login",
+  // Read-only OpenRouter catalog mirror — same data is publicly available at
+  // openrouter.ai/api/v1/models. No credentials, no user data, safe to expose.
+  "/api/openrouter",
 ];
 
 // Public top-level prefixes (LLM API endpoints with their own API key auth).
