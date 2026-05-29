@@ -6,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, THINKING_CONFIG } from "@/shared/constants/providers";
-import { getModelsByProviderId } from "@/shared/constants/models";
+import { useProviderModels } from "@/shared/hooks/useProviderModels";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import ModelRow from "./ModelRow";
@@ -52,8 +52,6 @@ export default function ProviderDetailPage() {
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [suggestedModels, setSuggestedModels] = useState([]);
-  const [kiloFreeModels, setKiloFreeModels] = useState([]);
-  const [orModels, setOrModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
   const [showAgRiskModal, setShowAgRiskModal] = useState(false);
@@ -127,7 +125,10 @@ export default function ProviderDetailPage() {
   const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth");
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
-  const models = getModelsByProviderId(providerId);
+  // models[] is the union of static PROVIDER_MODELS + kilo free models + OR-detected.
+  // Family-dedup'd (dated snapshots collapse with their latest pointer).
+  // OR data carries pricing/ctx; static entries are the offline catalog.
+  const { models } = useProviderModels(providerId);
   const providerAlias = getProviderAlias(providerId);
   
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
@@ -218,26 +219,8 @@ export default function ProviderDetailPage() {
     }
   }, []);
 
-  // Fetch free models from Kilo API for kilocode provider
-  useEffect(() => {
-    if (providerId !== "kilocode") return;
-    fetch("/api/providers/kilo/free-models")
-      .then((res) => res.json())
-      .then((data) => { if (data.models?.length) setKiloFreeModels(data.models); })
-      .catch(() => {});
-  }, [providerId]);
-
-  // Fetch OpenRouter-detected models for this provider's vendor (best-effort).
-  // Surfaces brand-new vendor releases (e.g. claude-opus-4-8 the day Anthropic
-  // ships it) in the picker within 24h of OR sync, without a 9router redeploy.
-  // Silent on miss — the static PROVIDER_MODELS list remains the source of truth.
-  useEffect(() => {
-    if (!providerId) return;
-    fetch(`/api/openrouter/models?provider=${encodeURIComponent(providerId)}`)
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => { if (data?.models?.length) setOrModels(data.models); })
-      .catch(() => {});
-  }, [providerId]);
+  // Note: kilo free models and OpenRouter-detected models are fetched inside
+  // useProviderModels (called above). No need for per-page fetch effects.
 
   const fetchConnections = useCallback(async () => {
     try {
@@ -862,15 +845,9 @@ export default function ProviderDetailPage() {
     }
     // Combine hardcoded models with Kilo free models (deduplicated)
     // Exclude non-llm models (embedding, tts, etc.) — they have dedicated pages under media-providers
-    const allModels = [
-      ...models,
-      ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-      ...orModels.filter(
-        (om) =>
-          !models.some((m) => m.id === om.id) &&
-          !kiloFreeModels.some((m) => m.id === om.id),
-      ),
-    ].filter((m) => !m.type || m.type === "llm");
+    // models[] from useProviderModels is already the union of static + kilo + OR,
+    // family-deduped. Just kind-filter to LLMs (image/tts/etc have their own page).
+    const allModels = models.filter((m) => !m.type || m.type === "llm");
     const disabledSet = new Set(disabledModelIds);
     const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
     const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
@@ -1371,15 +1348,9 @@ export default function ProviderDetailPage() {
             {"Available Models"}
           </h2>
           {!isCompatible && (() => {
-            const allIds = [
-              ...models,
-              ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-              ...orModels.filter(
-                (om) =>
-                  !models.some((m) => m.id === om.id) &&
-                  !kiloFreeModels.some((m) => m.id === om.id),
-              ),
-            ].filter((m) => !m.type || m.type === "llm").map((m) => m.id);
+            const allIds = models
+              .filter((m) => !m.type || m.type === "llm")
+              .map((m) => m.id);
             const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
             return (
               <div className="flex gap-2">

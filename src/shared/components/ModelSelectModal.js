@@ -5,6 +5,7 @@ import PropTypes from "prop-types";
 import Modal from "./Modal";
 import ProviderIcon from "./ProviderIcon";
 import { getModelsByProviderId } from "@/shared/constants/models";
+import { useProviderModels } from "@/shared/hooks/useProviderModels";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
@@ -36,10 +37,25 @@ export default function ModelSelectModal({
     if (!kindFilter) return activeProviders;
     return activeProviders.filter((p) => {
       const info = AI_PROVIDERS[p.provider];
-      const kinds = info?.serviceKinds || ["llm"];
-      return kinds.includes(kindFilter);
+      const supports = (info?.serviceKinds || ["llm"]).includes(kindFilter);
+      return supports;
     });
   }, [activeProviders, kindFilter]);
+
+  // Provider ids we'll need model data for: connected ones (kind-filtered) +
+  // no-auth ones. Fed to useProviderModels in one shot so the hook batches
+  // OpenRouter fetches and merges static + kilo + OR in one place.
+  const providerIdsForModels = useMemo(() => {
+    const ids = new Set(filteredActiveProviders.map((p) => p.provider));
+    for (const id of NO_AUTH_PROVIDER_IDS) {
+      if (!kindFilter || (AI_PROVIDERS[id]?.serviceKinds || ["llm"]).includes(kindFilter)) {
+        ids.add(id);
+      }
+    }
+    return [...ids];
+  }, [filteredActiveProviders, kindFilter]);
+  const { byProvider: modelsByProvider } = useProviderModels(providerIdsForModels);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [combos, setCombos] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
@@ -239,7 +255,12 @@ export default function ModelSelectModal({
           hasModels: nodeModels.length > 0,
         };
       } else {
-        const hardcodedModels = getModelsByProviderId(providerId);
+        // hardcodedModels here means "everything the catalog says this
+        // provider exposes" — that's the union of PROVIDER_MODELS, kilo free,
+        // and OR-detected. useProviderModels already merged + family-dedup'd
+        // these, so dated snapshots collapse into latest pointers and new OR
+        // entries (e.g. claude-opus-4-8) appear without a redeploy.
+        const hardcodedModels = modelsByProvider[providerId] || [];
         const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
 
         // Custom models: if no hardcoded models (e.g. openrouter), show all aliases for this provider
@@ -308,7 +329,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, modelsByProvider]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
