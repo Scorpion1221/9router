@@ -1,3 +1,80 @@
+# v0.4.63 (2026-05-26)
+
+## Fixes
+- proxyFetch: restore missing `Readable` import causing runtime `ReferenceError` in DNS-bypass fetch path
+
+## Improvements
+- Lower stream stall timeout from 60s → 35s for faster hang detection
+
+# v0.4.62 (2026-05-26)
+
+## Fixes
+- Codex: auto-retry when upstream drops mid-stream (no more hangs)
+- Codex: fix random 400/404 errors, tool-calling failures, and unstable prompt cache
+- MITM: support Antigravity 2.x 
+- Sanitize Read tool args to prevent retry loops from non-Anthropic models (#1144)
+- Implement json_schema fallback for OpenAI-compatible providers without native Structured Output (#1343)
+- Strip empty Read pages argument in OpenAI-to-Claude translator (#1354)
+- Forward Gemini output dimensions for embeddings (#1366)
+- Resolve setState-in-effect errors in dashboard components (#1362)
+- Gemini CLI: reuse stored OAuth project IDs for quota checks and show clearer setup guidance when the project is missing (#1271, #1428)
+
+## Features
+- Add Cloudflare Workers proxy deployer and pool integration (#1360)
+- Add Deno Deploy relays support and improved proxy pools dashboard layout (#1437)
+
+## Improvements
+- Refactor Tunnel into dedicated Cloudflare and Tailscale manager modules
+- Refactor tokenRefresh service with in-flight dedup to prevent refresh_token_reused errors
+
+# v0.4.59 (2026-05-21)
+
+## Fixes
+- OAuth: fix login flow on Windows
+
+# v0.4.58 (2026-05-21)
+
+## Features
+- xAI Grok provider (OAuth, API key, image)
+- Provider limits: paginated accounts with page size controls
+
+## Fixes
+- Tailscale: fix connection status on Windows (#1300)
+- Tunnel: fix false "checking" when tunnel URL is reachable
+- Stream: fix pipe errors on client disconnect/abort
+
+# v0.4.55 (2026-05-18)
+
+## Features
+- Xiaomi MiMo Token Plan: region selector (Singapore / China / Europe) — keys are cluster-specific
+- Antigravity: risk confirmation dialog before first connection
+- Gemini CLI: surface upstream retry delay on 429 errors
+
+## Fixes
+- MITM: cannot kill process on macOS under sudo (lsof not found in PATH)
+- Stream: false-positive stall timeout on Claude reasoning / Kiro responses
+- Tunnel: cannot re-enable after disable (stuck state)
+- Tunnel: cloudflared error messages now include log tail for easier debugging
+- Language switcher: applies selected locale immediately on close (#1234)
+- Antigravity OAuth: metadata now matches the official client
+
+## Improvements
+- Gemini CLI: bump engine to 0.34.0
+- Re-hide `qwen` (OAuth EOL) and `iflow` (not ready) providers
+
+# v0.4.52 (2026-05-17)
+
+## Features
+- Add Vercel AI Gateway provider support (#1183)
+- rtk: Kiro format tool result compression — handle conversationState.history & currentMessage, preserve error results, ~13.6% savings (#1194)
+
+## Fixes
+- openclaw: normalize agent.model object form `{primary, fallbacks}` before .startsWith → fix TypeError & 'not configured' status (#1216)
+- Usage Details pagination: stay inside mobile viewport <640px (#1218)
+- Fix test model error
+- Fix MIMO provider in Codex
+- Disable log file creation when using MITM AG
+
 # v0.4.50 (2026-05-16)
 
 ## Fixes
