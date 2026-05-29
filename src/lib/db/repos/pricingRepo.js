@@ -53,17 +53,9 @@ export async function getPricingForModel(provider, model) {
   const userPricing = await getUserPricing();
   if (provider && userPricing[provider]?.[model]) return userPricing[provider][model];
 
-  const { getPricingForModel: resolveConst } = await import("@/shared/constants/pricing.js");
-  const fromConst = resolveConst(provider, model);
-
-  // Exact constants hit wins (curated, vendor-verified). Pattern hits are a
-  // last-resort wildcard guess — prefer OpenRouter's live data over a guess
-  // when available.
-  const isPatternGuess = fromConst?._matchType === "pattern";
-  if (fromConst && !isPatternGuess) return fromConst;
-
-  // Probe OpenRouter cache. Used both when constants miss entirely and when
-  // constants only matched via a pattern.
+  // 1. OpenRouter cache — preferred source of truth for live pricing.
+  //    OR rows are vendor-published and refreshed every 24h, so they beat
+  //    any static snapshot we'd hand-maintain in code.
   try {
     const { lookupModelMetadata } = await import("open-sse/services/openrouterSync.js");
     const or = await lookupModelMetadata(provider, model);
@@ -80,14 +72,22 @@ export async function getPricingForModel(provider, model) {
         return out;
       }
     }
-  } catch { /* cache miss / cold boot — silent */ }
+  } catch { /* cache miss / cold boot — fall through to offline fallback */ }
 
-  // OR miss — return the pattern guess (if any) so we don't regress existing
-  // behavior. Strip the annotation so call sites don't accidentally treat it
-  // as authoritative.
-  if (isPatternGuess) {
-    const { _matchType, _matchedPattern, ...clean } = fromConst;
-    return { ...clean, _source: "pattern-guess", _matchedPattern };
+  // 2. Offline fallback — hand-maintained MODEL_PRICING / PROVIDER_PRICING /
+  //    PATTERN_PRICING in shared/constants/pricing.js. Used when OR is
+  //    unreachable (cold boot, no internet) or has no row for this model.
+  //    Pattern hits are wildcard guesses — return them annotated so callers
+  //    know not to trust them as authoritative.
+  const { getPricingForModel: resolveConst } = await import("@/shared/constants/pricing.js");
+  const fromConst = resolveConst(provider, model);
+  if (fromConst) {
+    const isPatternGuess = fromConst._matchType === "pattern";
+    if (isPatternGuess) {
+      const { _matchType, _matchedPattern, ...clean } = fromConst;
+      return { ...clean, _source: "pattern-guess", _matchedPattern };
+    }
+    return { ...fromConst, _source: "static-fallback" };
   }
   return null;
 }

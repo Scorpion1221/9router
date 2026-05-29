@@ -53,6 +53,7 @@ export default function ProviderDetailPage() {
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
+  const [orModels, setOrModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
   const [showAgRiskModal, setShowAgRiskModal] = useState(false);
@@ -223,6 +224,18 @@ export default function ProviderDetailPage() {
     fetch("/api/providers/kilo/free-models")
       .then((res) => res.json())
       .then((data) => { if (data.models?.length) setKiloFreeModels(data.models); })
+      .catch(() => {});
+  }, [providerId]);
+
+  // Fetch OpenRouter-detected models for this provider's vendor (best-effort).
+  // Surfaces brand-new vendor releases (e.g. claude-opus-4-8 the day Anthropic
+  // ships it) in the picker within 24h of OR sync, without a 9router redeploy.
+  // Silent on miss — the static PROVIDER_MODELS list remains the source of truth.
+  useEffect(() => {
+    if (!providerId) return;
+    fetch(`/api/openrouter/models?provider=${encodeURIComponent(providerId)}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => { if (data?.models?.length) setOrModels(data.models); })
       .catch(() => {});
   }, [providerId]);
 
@@ -852,6 +865,11 @@ export default function ProviderDetailPage() {
     const allModels = [
       ...models,
       ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
+      ...orModels.filter(
+        (om) =>
+          !models.some((m) => m.id === om.id) &&
+          !kiloFreeModels.some((m) => m.id === om.id),
+      ),
     ].filter((m) => !m.type || m.type === "llm");
     const disabledSet = new Set(disabledModelIds);
     const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
@@ -1356,6 +1374,11 @@ export default function ProviderDetailPage() {
             const allIds = [
               ...models,
               ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
+              ...orModels.filter(
+                (om) =>
+                  !models.some((m) => m.id === om.id) &&
+                  !kiloFreeModels.some((m) => m.id === om.id),
+              ),
             ].filter((m) => !m.type || m.type === "llm").map((m) => m.id);
             const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
             return (
