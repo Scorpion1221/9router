@@ -44,6 +44,28 @@ const PROVIDER_TO_OR_VENDORS = {
   qw: ["qwen"],
 };
 
+// Vendor-specific naming conventions: OR stores ids the way OpenRouter routes
+// them, but the actual upstream API often uses a different separator. We
+// normalize to the form the upstream actually accepts, so the dashboard's
+// copy-to-clipboard id can be pasted straight into a request and work.
+//
+//   Anthropic upstream: claude-opus-4-8         (dashes between digits)
+//   OpenRouter id:      anthropic/claude-opus-4.8  (dot)
+//
+//   Google upstream:    gemini-2.5-pro          (dots already)
+//   OpenRouter id:      google/gemini-2.5-pro   (dot)
+//
+// If we ever add a vendor that has yet another convention, add it here.
+function canonicalizeBase(vendor, base) {
+  if (vendor === "anthropic") {
+    // Replace dots between digits with dashes: 4.8 → 4-8, 3.5 → 3-5.
+    // Leave alpha-adjacent dots alone (none exist in current Anthropic ids,
+    // but be defensive).
+    return base.replace(/(\d)\.(\d)/g, "$1-$2");
+  }
+  return base;
+}
+
 // Strip OR-only marketing suffixes that we don't expose as separate models
 // to the dashboard. The "-fast" variant on Anthropic rows is a different
 // upstream endpoint, not a model — pricing is different but the model id is
@@ -92,15 +114,20 @@ export async function GET(request) {
   }
 
   const vendorSet = new Set(vendors);
+  const seen = new Set(); // dedup post-canonicalization (e.g. 4-7 vs 4.7)
   const models = [];
   for (const orId of Object.keys(all)) {
     const e = all[orId];
     if (!e || !vendorSet.has(e.vendor)) continue;
     if (!shouldExposeModel(e.base)) continue;
+    const canonical = canonicalizeBase(e.vendor, e.base);
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
     models.push({
-      // Use OR `base` as the model id. The dashboard layer prepends the
-      // provider alias (cc/) when copying — same shape as PROVIDER_MODELS.
-      id: e.base,
+      // Use the canonical (vendor-API-accepting) form as the visible id, so
+      // it dedups cleanly against PROVIDER_MODELS (which already uses dashes
+      // for Anthropic) and so users can paste it into requests directly.
+      id: canonical,
       name: e.name,
       contextWindow: e.contextWindow,
       maxOutput: e.maxOutput,
@@ -111,6 +138,9 @@ export async function GET(request) {
       reasoningPrice: e.reasoningPrice,
       source: "openrouter",
       pricingModelId: e.id,
+      // Original OR base preserved so callers that need the OR-routed form
+      // (e.g. price lookups via OpenRouter) can still find it.
+      orBase: e.base,
     });
   }
 
