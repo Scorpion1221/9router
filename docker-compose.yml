@@ -8,12 +8,20 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      DATA_DIR: /app/data
+      PORT: "20128"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: production
+      HEADROOM_URL: http://headroom:8787
     ports:
       # 宿主机 20128 -> 容器 20128
       - "20128:20128"
     volumes:
       # 数据库 / usage / 登录密码哈希 都存在 /app/data 下
       - 9router-data:/app/data
+    depends_on:
+      - headroom
     healthcheck:
       # 容器里没有 curl，用 node 直连 127.0.0.1 做健康检查
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:20128/', r => process.exit(r.statusCode >= 500 ? 1 : 0)).on('error', () => process.exit(1))"]
@@ -22,5 +30,13 @@ services:
       retries: 5
       start_period: 30s
 
+  headroom:
+    image: ghcr.io/chopratejas/headroom:latest
+    container_name: headroom
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+
 volumes:
   9router-data:
+    name: 9router-data

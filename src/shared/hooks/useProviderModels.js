@@ -81,7 +81,7 @@ function mergeModels(providerId, kiloModels, orModelsList) {
 function applyKindFilter(models, kindFilter) {
   if (!kindFilter) return models;
   return models.filter((m) => {
-    const t = m.type || "llm";
+    const t = m.kind || m.type || "llm";
     return kindFilter === "llm" ? t === "llm" : t === kindFilter;
   });
 }

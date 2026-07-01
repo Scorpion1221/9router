@@ -4,7 +4,10 @@ import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/sha
 import { GEMINI_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
+import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
+import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
+import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -77,6 +80,13 @@ const resolveQwenModelsUrl = (connection) => {
   }
   return `https://${value.replace(/\/$/, "")}/v1/models`;
 };
+
+const getStaticProviderModels = (providerId) =>
+  getModelsByProviderId(providerId).map((model) => ({
+    ...model,
+    id: model.id,
+    name: model.name || model.id,
+  }));
 
 // Generic custom resolver for OAuth providers that need refresh-on-401 + token persist.
 // Receives a `fetchFn(token)` and returns parsed models or throws.
@@ -225,13 +235,13 @@ const PROVIDER_MODELS_CONFIG = {
   groq: createOpenAIModelsConfig("https://api.groq.com/openai/v1/models"),
   xai: createOpenAIModelsConfig("https://api.x.ai/v1/models"),
   mistral: createOpenAIModelsConfig("https://api.mistral.ai/v1/models"),
-  perplexity: createOpenAIModelsConfig("https://api.perplexity.ai/models"),
+  perplexity: createOpenAIModelsConfig("https://api.perplexity.ai/v1/models"),
   together: createOpenAIModelsConfig("https://api.together.xyz/v1/models"),
   fireworks: createOpenAIModelsConfig("https://api.fireworks.ai/inference/v1/models"),
   cerebras: createOpenAIModelsConfig("https://api.cerebras.ai/v1/models"),
   cohere: createOpenAIModelsConfig("https://api.cohere.ai/v1/models"),
   nebius: createOpenAIModelsConfig("https://api.studio.nebius.ai/v1/models"),
-  siliconflow: createOpenAIModelsConfig("https://api.siliconflow.cn/v1/models"),
+  siliconflow: createOpenAIModelsConfig("https://api.siliconflow.com/v1/models"),
   hyperbolic: createOpenAIModelsConfig("https://api.hyperbolic.xyz/v1/models"),
   ollama: createOpenAIModelsConfig("https://ollama.com/api/tags"),
   // ollama-local: url resolved dynamically below via providerSpecificData.baseUrl
@@ -240,6 +250,22 @@ const PROVIDER_MODELS_CONFIG = {
   nvidia: createOpenAIModelsConfig("https://integrate.api.nvidia.com/v1/models"),
   assemblyai: createOpenAIModelsConfig("https://api.assemblyai.com/v1/models"),
   "vercel-ai-gateway": createOpenAIModelsConfig("https://ai-gateway.vercel.sh/v1/models"),
+  kimchi: {
+    customResolver: async (connection) => {
+      const result = await resolveKimchiModels({
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+        providerSpecificData: connection.providerSpecificData || {},
+      }, { forceRefresh: true, log: console });
+      if (result?.models?.length) {
+        return { models: result.models };
+      }
+      return {
+        models: getStaticProviderModels("kimchi"),
+        warning: "Kimchi returned no live models; falling back to static catalog.",
+      };
+    }
+  },
 
   // Custom resolvers (non-OpenAI-shaped APIs / token-refresh flows)
   kiro: {
@@ -285,6 +311,41 @@ const PROVIDER_MODELS_CONFIG = {
       }
       return { models: [], warning };
     }
+  },
+  qoder: {
+    customResolver: async (connection) => {
+      const credentials = {
+        accessToken: connection.accessToken,
+        refreshToken: connection.refreshToken,
+        email: connection.email,
+        displayName: connection.displayName,
+        providerSpecificData: connection.providerSpecificData || {},
+      };
+      let warning;
+      try {
+        const result = await resolveQoderModels(credentials, { forceRefresh: true });
+        if (result?.models?.length) {
+          return {
+            models: result.models.map((m) => ({
+              // Use the canonical "qoder/<key>" id so the dashboard
+              // surfaces the same identifier the chat router expects.
+              id: `qoder/${m.id}`,
+              name: m.name,
+              contextLength: m.contextLength,
+              isVL: m.isVL,
+              isReasoning: m.isReasoning,
+              maxOutputTokens: m.maxOutputTokens,
+              description: m.description,
+            })),
+          };
+        }
+        warning = "Qoder returned no models; falling back to static catalog.";
+      } catch (error) {
+        warning = `Failed to fetch Qoder models: ${error.message}`;
+        console.log("Failed to fetch Qoder models dynamically, falling back to static:", error.message);
+      }
+      return { models: [], warning };
+    },
   },
   "gemini-cli": {
     customResolver: buildOAuthResolver({

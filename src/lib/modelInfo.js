@@ -25,6 +25,10 @@ export const KIND_ENDPOINT = {
 
 const TTS_VOICES_API = new Set(["elevenlabs", "edge-tts", "deepgram", "inworld", "local-device"]);
 
+function modelKind(model, fallback = "llm") {
+  return model?.kind || model?.type || fallback;
+}
+
 /**
  * Build the 9router-native info object for a single model.
  * Merges static config with OpenRouter cache (silent on miss).
@@ -84,7 +88,7 @@ export async function buildInfo({ alias, providerId, model, kind, providerInfo }
  * a caller that planned for 1M would 413), and the FIRST member's pricing
  * (best-effort estimate; actual cost depends on which member is chosen).
  */
-export async function resolveModelInfo(fullId) {
+export async function resolveModelInfo(fullId, requestedKind = null) {
   if (!fullId) return null;
 
   // Combo lookup: combos are stored by name (no slash), and dispatch to one of
@@ -102,12 +106,14 @@ export async function resolveModelInfo(fullId) {
         const ctxs = memberInfos.map((i) => i.contextWindow).filter(Boolean);
         const outs = memberInfos.map((i) => i.maxOutput).filter(Boolean);
         const firstPriced = memberInfos.find((i) => i.pricing);
+        const comboKind = combo.kind || "llm";
+        if (requestedKind && comboKind !== requestedKind) return null;
         const out = {
           id: fullId,
           name: fullId,
-          kind: combo.kind || "llm",
+          kind: comboKind,
           owned_by: "combo",
-          endpoint: KIND_ENDPOINT[combo.kind || "llm"] || null,
+          endpoint: KIND_ENDPOINT[comboKind] || null,
           comboMembers: combo.models,
         };
         if (ctxs.length) out.contextWindow = Math.min(...ctxs);
@@ -129,9 +135,11 @@ export async function resolveModelInfo(fullId) {
   const providerInfo = AI_PROVIDERS[providerId];
 
   const list = PROVIDER_MODELS[alias] || PROVIDER_MODELS[providerId] || [];
-  const m = list.find((x) => x.id === modelId);
+  const m = requestedKind
+    ? list.find((x) => x.id === modelId && modelKind(x, "llm") === requestedKind)
+    : list.find((x) => x.id === modelId);
   if (m) {
-    const kind = m.type || "llm";
+    const kind = modelKind(m, "llm");
     return await buildInfo({ alias, providerId, model: m, kind, providerInfo });
   }
 
@@ -141,17 +149,18 @@ export async function resolveModelInfo(fullId) {
     ["embedding", providerInfo?.embeddingConfig],
   ];
   for (const [kind, cfg] of subs) {
+    if (requestedKind && requestedKind !== kind) continue;
     const sm = cfg?.models?.find((x) => x.id === modelId);
     if (sm) return await buildInfo({ alias, providerId, model: sm, kind, providerInfo });
   }
 
-  if (modelId === "search" && providerInfo?.searchConfig) {
+  if ((!requestedKind || requestedKind === "webSearch") && modelId === "search" && providerInfo?.searchConfig) {
     return await buildInfo({
       alias, providerId, kind: "webSearch", providerInfo,
       model: { id: "search", name: `${providerInfo.name} Search`, params: ["query", "max_results", "country", "language", "time_range", "domain_filter", "search_type"] },
     });
   }
-  if (modelId === "fetch" && providerInfo?.fetchConfig) {
+  if ((!requestedKind || requestedKind === "webFetch") && modelId === "fetch" && providerInfo?.fetchConfig) {
     return await buildInfo({
       alias, providerId, kind: "webFetch", providerInfo,
       model: { id: "fetch", name: `${providerInfo.name} Fetch`, params: ["url", "format", "max_characters"] },
@@ -160,6 +169,7 @@ export async function resolveModelInfo(fullId) {
 
   // Last-resort OpenRouter probe for user-added passthrough models.
   try {
+    if (requestedKind && requestedKind !== "llm") return null;
     const or = await lookupModelMetadata(providerId, modelId);
     if (or) {
       return await buildInfo({

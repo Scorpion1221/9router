@@ -20,7 +20,7 @@ export async function getPricing() {
   if (cache.value && cache.expiresAt > now) return cache.value;
 
   const userPricing = await getUserPricing();
-  const { PROVIDER_PRICING } = await import("@/shared/constants/pricing.js");
+  const { PROVIDER_PRICING } = await import("open-sse/providers/pricing.js");
   const merged = {};
 
   for (const [provider, models] of Object.entries(PROVIDER_PRICING)) {
@@ -74,12 +74,10 @@ export async function getPricingForModel(provider, model) {
     }
   } catch { /* cache miss / cold boot — fall through to offline fallback */ }
 
-  // 2. Offline fallback — hand-maintained MODEL_PRICING / PROVIDER_PRICING /
-  //    PATTERN_PRICING in shared/constants/pricing.js. Used when OR is
-  //    unreachable (cold boot, no internet) or has no row for this model.
-  //    Pattern hits are wildcard guesses — return them annotated so callers
-  //    know not to trust them as authoritative.
-  const { getPricingForModel: resolveConst } = await import("@/shared/constants/pricing.js");
+  // 2. Offline fallback — hand-maintained provider pricing snapshot. Pattern
+  //    hits are wildcard guesses; annotate them so callers don't treat them as
+  //    authoritative.
+  const { getPricingForModel: resolveConst } = await import("open-sse/providers/pricing.js");
   const fromConst = resolveConst(provider, model);
   if (fromConst) {
     const isPatternGuess = fromConst._matchType === "pattern";

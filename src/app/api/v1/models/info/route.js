@@ -26,13 +26,14 @@ export async function GET(request) {
   ensureScheduler();
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
+  const kind = searchParams.get("kind");
   if (!id) {
     return Response.json(
       { error: { message: "Missing required query param: id (e.g. ?id=openai/dall-e-3)", type: "invalid_request_error" } },
       { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
     );
   }
-  const info = await resolveModelInfo(id);
+  const info = await resolveModelInfo(id, kind);
   if (!info) {
     return Response.json(
       { error: { message: `Model not found: ${id}`, type: "not_found" } },

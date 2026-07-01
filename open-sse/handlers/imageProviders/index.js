@@ -12,12 +12,14 @@ import blackForestLabs from "./blackForestLabs.js";
 import runwayml from "./runwayml.js";
 import cloudflareAi from "./cloudflareAi.js";
 import azure from "./azure.js";
+import antigravity from "./antigravity.js";
 
 const ADAPTERS = {
   openai: createOpenAIAdapter("openai"),
   minimax: createOpenAIAdapter("minimax"),
   openrouter: createOpenAIAdapter("openrouter"),
   recraft: createOpenAIAdapter("recraft"),
+  "vercel-ai-gateway": createOpenAIAdapter("vercel-ai-gateway"),
   xai: createOpenAIAdapter("xai"),
   gemini,
   codex,
@@ -25,6 +27,7 @@ const ADAPTERS = {
   comfyui,
   huggingface,
   nanobanana,
+  antigravity,
   "fal-ai": falAi,
   "stability-ai": stabilityAi,
   "black-forest-labs": blackForestLabs,

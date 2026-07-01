@@ -20,6 +20,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const [polling, setPolling] = useState(false);
   const popupRef = useRef(null);
   const pollingAbortRef = useRef(false);
+  const openedRef = useRef(false);
   const { copied, copy } = useCopyToClipboard();
 
   // State for client-only values to avoid hydration mismatch
@@ -64,7 +65,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(err.message);
       setStep("error");
     }
-  }, [authData, provider, onSuccess]);
+  }, [authData, provider, onSuccess, oauthMeta]);
 
   const completeXaiManualCode = useCallback(async (code) => {
     if (!authData?.state) return;
@@ -86,12 +87,16 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   }, [authData, onSuccess]);
 
   // Poll for device code token
-  const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData) => {
+  const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData, deadlineMs) => {
     pollingAbortRef.current = false;
     setPolling(true);
-    const maxAttempts = 60;
+    // Honor the upstream's expires_in when supplied (qoder sets 300s) so we
+    // don't time out earlier than the device code itself. Default 120s
+    // matches the prior behavior for providers that don't surface a value.
+    const startedAt = Date.now();
+    const deadline = startedAt + (Number.isFinite(deadlineMs) && deadlineMs > 0 ? deadlineMs : 120_000);
 
-    for (let i = 0; i < maxAttempts; i++) {
+    while (Date.now() < deadline) {
       // Check if polling should be aborted
       if (pollingAbortRef.current) {
         console.log("[OAuthModal] Polling aborted");
@@ -152,7 +157,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(null);
 
       // Device code flow providers
-      const deviceCodeProviders = ["github", "qwen", "kiro", "kimi-coding", "kilocode", "codebuddy"];
+      const deviceCodeProviders = ["github", "qwen", "kiro", "kimi-coding", "kilocode", "codebuddy-cn", "qoder"];
       if (deviceCodeProviders.includes(provider)) {
         setIsDeviceCode(true);
         setStep("waiting");
@@ -175,7 +180,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         const verifyUrl = data.verification_uri_complete || data.verification_uri;
         if (verifyUrl) window.open(verifyUrl, "_blank", "noopener,noreferrer");
 
-        // Pass extraData for Kiro (contains _clientId, _clientSecret)
+        // Pass extraData for Kiro (contains _clientId, _clientSecret) and
+        // Qoder (contains _qoderMachineId / _qoderNonce — needed so mapTokens
+        // can persist the machine id alongside the token).
         const extraData = provider === "kiro"
           ? {
               _clientId: data._clientId,
@@ -184,8 +191,24 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
               _authMethod: data._authMethod,
               _startUrl: data._startUrl,
             }
+          : provider === "qoder"
+          ? {
+              _qoderNonce: data._qoderNonce,
+              _qoderMachineId: data._qoderMachineId,
+              _qoderVerifier: data.codeVerifier,
+            }
           : null;
-        startPolling(data.device_code, data.codeVerifier, data.interval || 5, extraData);
+        startPolling(
+          data.device_code,
+          data.codeVerifier,
+          data.interval || 5,
+          extraData,
+          // Use the upstream's expires_in if present so we don't time out
+          // before the device code itself (qoder gives 300s).
+          Number.isFinite(data.expires_in) && data.expires_in > 0
+            ? data.expires_in * 1000
+            : undefined,
+        );
         return;
       }
 
@@ -288,6 +311,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   // Reset state and start OAuth when modal opens
   useEffect(() => {
     if (isOpen && provider) {
+      // Guard against StrictMode/effect re-runs auto-opening multiple tabs.
+      if (openedRef.current) return;
+      openedRef.current = true;
       setAuthData(null);
       setCallbackUrl("");
       setError(null);
@@ -299,6 +325,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     } else if (!isOpen) {
       // Abort polling and cleanup proxy when modal closes
       pollingAbortRef.current = true;
+      openedRef.current = false;
       if (provider === "codex") {
         fetch("/api/oauth/codex/stop-proxy").catch(() => {});
       } else if (provider === "xai") {
@@ -360,7 +387,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     const handleCallback = async (data) => {
       if (callbackProcessedRef.current) return; // Already processed
 
-      const { code, state, error: callbackError, errorDescription } = data;
+      const { code, token, state, error: callbackError, errorDescription } = data;
 
       if (callbackError) {
         callbackProcessedRef.current = true;
@@ -369,9 +396,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         return;
       }
 
-      if (code) {
+      if (token || code) {
         callbackProcessedRef.current = true;
-        await exchangeTokens(code, state);
+        await exchangeTokens(token || code, state);
       }
     };
 
@@ -450,8 +477,14 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         return;
       }
 
+      if (provider === "kimchi" && input && !input.includes("://") && !input.includes("?")) {
+        await exchangeTokens(input, null);
+        return;
+      }
+
       const url = new URL(input);
       const code = url.searchParams.get("code");
+      const token = url.searchParams.get("token");
       const state = url.searchParams.get("state");
       const errorParam = url.searchParams.get("error");
 
@@ -459,11 +492,17 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         throw new Error(url.searchParams.get("error_description") || errorParam);
       }
 
-      if (!code) {
-        throw new Error(provider === "xai" ? "Paste the callback URL or copied xAI code" : "No authorization code found in URL");
+      if (!code && !token) {
+        throw new Error(
+          provider === "xai"
+            ? "Paste the callback URL or copied xAI code"
+            : provider === "kimchi"
+              ? "No Kimchi token found in URL"
+              : "No authorization code found in URL"
+        );
       }
 
-      await exchangeTokens(code, state);
+      await exchangeTokens(token || code, state);
     } catch (err) {
       setError(err.message);
       setStep("error");
@@ -482,11 +521,14 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
   if (!provider || !providerInfo) return null;
   const isXaiProvider = provider === "xai";
+  const isKimchiProvider = provider === "kimchi";
   const deviceLoginUrl = deviceData?.verification_uri_complete || deviceData?.verification_uri || "";
   const modalTitle = isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
   const manualPlaceholder = isXaiProvider
     ? "http://127.0.0.1:56121/callback?code=... or copied code"
-    : placeholderUrl;
+    : isKimchiProvider
+      ? `${placeholderUrl.replace("code=...", "token=...")} or copied token`
+      : placeholderUrl;
 
   return (
     <Modal isOpen={isOpen} title={modalTitle} onClose={handleClose} size="lg">
@@ -527,11 +569,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
               <div>
                 <p className="text-sm font-medium mb-2">
-                  Step 2: Paste the {provider === "xai" ? "callback URL or copied code" : "callback URL"} here
+                  Step 2: Paste the {provider === "xai" ? "callback URL or copied code" : isKimchiProvider ? "callback URL or copied token" : "callback URL"} here
                 </p>
                 <p className="text-xs text-text-muted mb-2">
                   {provider === "xai"
                     ? "If xAI shows a code instead of redirecting, paste that code here."
+                    : isKimchiProvider
+                      ? "After authorization, copy the full callback URL or token from your browser."
                     : "After authorization, copy the full URL from your browser."}
                 </p>
                 <Input
