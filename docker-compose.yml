@@ -34,9 +34,6 @@ services:
     image: ghcr.io/chopratejas/headroom:latest
     container_name: headroom
     restart: unless-stopped
-    ports:
-      - "8787:8787"
 
 volumes:
   9router-data:
-    name: 9router-data
