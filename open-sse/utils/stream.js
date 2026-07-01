@@ -102,8 +102,10 @@ export function createSSEStream(options = {}) {
         if (mode === STREAM_MODE.PASSTHROUGH) {
           let output;
           let injectedUsage = false;
+          const passthroughDone = trimmed.startsWith("data:") && trimmed.slice(5).trim() === "[DONE]";
+          if (passthroughDone) streamDoneSent = true;
 
-          if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
+          if (trimmed.startsWith("data:") && !passthroughDone) {
             try {
               const parsed = JSON.parse(trimmed.slice(5).trim());
 
