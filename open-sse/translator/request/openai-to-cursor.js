@@ -11,6 +11,8 @@ import { FORMATS } from "../formats.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 import { DEFAULT_MIN_TOKENS } from "../../config/runtimeConfig.js";
 
+const isInstructionRole = (role) => role === ROLE.SYSTEM || role === ROLE.DEVELOPER;
+
 function extractContent(content) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -81,7 +83,7 @@ function convertMessages(messages) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
 
-    if (msg.role === ROLE.SYSTEM) {
+    if (isInstructionRole(msg.role)) {
       result.push({
         role: ROLE.USER,
         content: `[System Instructions]\n${extractContent(msg.content)}`

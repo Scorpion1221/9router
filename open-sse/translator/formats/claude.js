@@ -9,6 +9,8 @@ import { PROVIDERS } from "../../providers/index.js";
 import { getCapabilitiesForModel } from "../../providers/capabilities.js";
 import { DEFAULT_MAX_TOKENS } from "../../config/runtimeConfig.js";
 
+const isInstructionRole = (role) => role === ROLE.SYSTEM || role === ROLE.DEVELOPER;
+
 // Check if message has valid non-empty content
 export function hasValidContent(msg) {
   if (typeof msg.content === "string" && msg.content.trim()) return true;
@@ -127,7 +129,7 @@ export function normalizeClaudePassthrough(body, model = "") {
     const systemBlocks = [];
     const messages = [];
     for (const msg of body.messages) {
-      if (msg.role === ROLE.SYSTEM) {
+      if (isInstructionRole(msg.role)) {
         const text = typeof msg.content === "string"
           ? msg.content
           : Array.isArray(msg.content)

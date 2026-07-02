@@ -15,6 +15,8 @@ import { randomUUID } from "crypto";
 import { ROLE, OPENAI_BLOCK } from "../schema/index.js";
 import { DEFAULT_MAX_TOKENS } from "../../config/runtimeConfig.js";
 
+const isInstructionRole = (role) => role === ROLE.SYSTEM || role === ROLE.DEVELOPER;
+
 function flattenText(content) {
   if (content == null) return "";
   if (typeof content === "string") return content;
@@ -66,7 +68,7 @@ function convertMessages(messages = []) {
     if (!m) continue;
     const role = m.role;
 
-    if (role === ROLE.SYSTEM) {
+    if (isInstructionRole(role)) {
       const t = flattenText(m.content);
       if (t) systemTexts.push(t);
       continue;

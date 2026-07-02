@@ -10,6 +10,7 @@ import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 // Empty prefix matches real Claude Code behavior (no tool name prefix).
 // Previously "proxy_" was used but this is a detectable fingerprint difference.
 const CLAUDE_OAUTH_TOOL_PREFIX = "";
+const isInstructionRole = (role) => role === ROLE.SYSTEM || role === ROLE.DEVELOPER;
 
 // Convert OpenAI request to Claude format
 export function openaiToClaudeRequest(model, body, stream) {
@@ -31,15 +32,15 @@ export function openaiToClaudeRequest(model, body, stream) {
   const systemParts = [];
 
   if (body.messages && Array.isArray(body.messages)) {
-    // Extract system messages
+    // Extract system/developer instruction messages
     for (const msg of body.messages) {
-      if (msg.role === ROLE.SYSTEM) {
+      if (isInstructionRole(msg.role)) {
         systemParts.push(typeof msg.content === "string" ? msg.content : extractTextContent(msg.content, "\n"));
       }
     }
 
-    // Filter out system messages for separate processing
-    const nonSystemMessages = body.messages.filter(m => m.role !== ROLE.SYSTEM);
+    // Filter out instruction messages for separate processing
+    const nonSystemMessages = body.messages.filter(m => !isInstructionRole(m.role));
 
     // Process messages with merging logic
     // CRITICAL: tool_result must be in separate message immediately after tool_use

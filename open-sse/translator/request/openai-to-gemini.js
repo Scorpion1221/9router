@@ -35,6 +35,8 @@ function sanitizeGeminiFunctionName(name) {
   return sanitized.substring(0, 64);
 }
 
+const isInstructionRole = (role) => role === ROLE.SYSTEM || role === ROLE.DEVELOPER;
+
 function normalizeGeminiContents(contents) {
   const out = [];
   for (const c of contents || []) {
@@ -100,12 +102,12 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
       const role = msg.role;
       const content = msg.content;
 
-      if (role === ROLE.SYSTEM && body.messages.length > 1) {
+      if (isInstructionRole(role) && body.messages.length > 1) {
         result.systemInstruction = {
           role: GEMINI_ROLE.USER,
           parts: [{ text: typeof content === "string" ? content : extractTextContent(content) }]
         };
-      } else if (role === ROLE.USER || (role === ROLE.SYSTEM && body.messages.length === 1)) {
+      } else if (role === ROLE.USER || (isInstructionRole(role) && body.messages.length === 1)) {
         const parts = convertOpenAIContentToParts(content);
         if (parts.length > 0) {
           result.contents.push({ role: GEMINI_ROLE.USER, parts });

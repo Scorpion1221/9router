@@ -17,6 +17,8 @@ import { parseDataUri } from "../concerns/image.js";
 import { DEFAULT_IMAGE_MIME } from "../schema/index.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 
+const isInstructionRole = (role) => role === ROLE.SYSTEM || role === ROLE.DEVELOPER;
+
 /** Render a single tool call as a readable text line. */
 function toolCallToText(name, input) {
   let argStr;
@@ -169,7 +171,7 @@ function safeJSONParse(str, fallback) {
 
 /**
  * Convert OpenAI messages to Kiro format
- * Rules: system/tool/user -> user role, merge consecutive same roles.
+ * Rules: system/developer/tool/user -> user role, merge consecutive same roles.
  *
  * Returns { history, currentMessage }.
  */
@@ -269,8 +271,8 @@ function convertMessages(messages, tools, model) {
     const msg = messages[i];
     let role = msg.role;
 
-    // Normalize: system/tool -> user
-    if (role === ROLE.SYSTEM || role === ROLE.TOOL) {
+    // Normalize: system/developer/tool -> user
+    if (isInstructionRole(role) || role === ROLE.TOOL) {
       role = ROLE.USER;
     }
 
