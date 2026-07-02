@@ -216,18 +216,20 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
     store: false
   };
 
-  // Extract system message as instructions
-  let hasSystemMessage = false;
+  // Extract system/developer messages as instructions.
+  // OpenAI Chat supports role=developer for high-priority instructions; Codex
+  // Responses expects those instructions in the top-level `instructions` field.
+  let hasInstructionMessage = false;
   const messages = body.messages || [];
 
   for (const msg of messages) {
-    if (msg.role === ROLE.SYSTEM) {
-      // Use first system message as instructions
-      if (!hasSystemMessage) {
+    if (msg.role === ROLE.SYSTEM || msg.role === ROLE.DEVELOPER) {
+      // Use first instruction message as instructions
+      if (!hasInstructionMessage) {
         result.instructions = typeof msg.content === "string" ? msg.content : "";
-        hasSystemMessage = true;
+        hasInstructionMessage = true;
       }
-      continue; // Skip system messages in input
+      continue; // Skip instruction messages in input
     }
 
     // Convert user/assistant messages to input items
@@ -291,8 +293,8 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
     }
   }
 
-  // If no system message, leave instructions empty (will be filled by executor)
-  if (!hasSystemMessage) {
+  // If no instruction message, leave instructions empty (will be filled by executor)
+  if (!hasInstructionMessage) {
     result.instructions = "";
   }
 
