@@ -6,12 +6,16 @@ import { getCapabilitiesForModel } from "../../providers/capabilities.js";
 const MAX_COMPLETION_TOKEN_PROVIDERS = new Set(["openai", "azure"]);
 const REQUIRES_MAX_COMPLETION_TOKENS = /(?:^|\/)(?:gpt-5(?:[.-]|$)|o\d+(?:[.-]|$))/i;
 
+export function isGpt5OrOSeriesModel(model) {
+  return REQUIRES_MAX_COMPLETION_TOKENS.test(model || "");
+}
+
 // Official OpenAI-compatible endpoints reject max_tokens for GPT-5/o-series.
 // Run this after model routing so combos are normalized against the selected
 // provider/model, not the combo's public alias.
 export function normalizeMaxCompletionTokens(provider, model, body) {
   if (!MAX_COMPLETION_TOKEN_PROVIDERS.has(provider) ||
-      !REQUIRES_MAX_COMPLETION_TOKENS.test(model || "") ||
+      !isGpt5OrOSeriesModel(model) ||
       !body || typeof body !== "object" ||
       body.max_tokens === undefined) {
     return body;

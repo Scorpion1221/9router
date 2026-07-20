@@ -1,13 +1,21 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  isGpt5OrOSeriesModel,
   normalizeMaxCompletionTokens,
   stripUnsupportedParams,
 } from "../../open-sse/translator/concerns/paramSupport.js";
+import { openaiToOpenAIResponsesRequest } from "../../open-sse/translator/request/openai-responses.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
 import { AzureExecutor } from "../../open-sse/executors/azure.js";
 
 describe("normalizeMaxCompletionTokens", () => {
+  it("identifies GPT-5 and o-series model ids", () => {
+    expect(isGpt5OrOSeriesModel("gpt-5.6-sol")).toBe(true);
+    expect(isGpt5OrOSeriesModel("o4-mini")).toBe(true);
+    expect(isGpt5OrOSeriesModel("gpt-4o")).toBe(false);
+  });
+
   it("maps max_tokens for official OpenAI GPT-5 models", () => {
     const body = { max_tokens: 16384 };
 
@@ -53,6 +61,13 @@ describe("normalizeMaxCompletionTokens", () => {
     expect(azure.transformRequest("o3", { max_tokens: 2048 })).toEqual({
       max_completion_tokens: 2048,
     });
+  });
+
+  it("maps Chat token limits to Responses max_output_tokens", () => {
+    expect(openaiToOpenAIResponsesRequest("gpt-5.6-sol", {
+      messages: [{ role: "user", content: "hi" }],
+      max_completion_tokens: 2048,
+    })).toMatchObject({ max_output_tokens: 2048 });
   });
 });
 
