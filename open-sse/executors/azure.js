@@ -1,4 +1,5 @@
 import { DefaultExecutor } from "./default.js";
+import { normalizeMaxCompletionTokens } from "../translator/concerns/paramSupport.js";
 
 export class AzureExecutor extends DefaultExecutor {
   constructor() {
@@ -52,6 +53,6 @@ export class AzureExecutor extends DefaultExecutor {
   }
 
   transformRequest(model, body, stream, credentials) {
-    return body;
+    return normalizeMaxCompletionTokens("azure", model, { ...body });
   }
 }

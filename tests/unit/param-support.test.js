@@ -1,6 +1,60 @@
 import { describe, it, expect } from "vitest";
 
-import { stripUnsupportedParams } from "../../open-sse/translator/concerns/paramSupport.js";
+import {
+  normalizeMaxCompletionTokens,
+  stripUnsupportedParams,
+} from "../../open-sse/translator/concerns/paramSupport.js";
+import { DefaultExecutor } from "../../open-sse/executors/default.js";
+import { AzureExecutor } from "../../open-sse/executors/azure.js";
+
+describe("normalizeMaxCompletionTokens", () => {
+  it("maps max_tokens for official OpenAI GPT-5 models", () => {
+    const body = { max_tokens: 16384 };
+
+    normalizeMaxCompletionTokens("openai", "gpt-5.6-sol", body);
+
+    expect(body).toEqual({ max_completion_tokens: 16384 });
+  });
+
+  it("maps max_tokens for official OpenAI o-series models", () => {
+    const body = { max_tokens: 4096 };
+
+    normalizeMaxCompletionTokens("openai", "o4-mini", body);
+
+    expect(body).toEqual({ max_completion_tokens: 4096 });
+  });
+
+  it("keeps an explicit max_completion_tokens value", () => {
+    const body = { max_tokens: 4096, max_completion_tokens: 8192 };
+
+    normalizeMaxCompletionTokens("openai", "gpt-5.6-sol", body);
+
+    expect(body).toEqual({ max_completion_tokens: 8192 });
+  });
+
+  it("does not rewrite other providers or older OpenAI models", () => {
+    const anthropicBody = { max_tokens: 4096 };
+    const gpt4Body = { max_tokens: 4096 };
+
+    normalizeMaxCompletionTokens("anthropic", "gpt-5.6-sol", anthropicBody);
+    normalizeMaxCompletionTokens("openai", "gpt-4o", gpt4Body);
+
+    expect(anthropicBody).toEqual({ max_tokens: 4096 });
+    expect(gpt4Body).toEqual({ max_tokens: 4096 });
+  });
+
+  it("runs in the final OpenAI and Azure executor transforms", () => {
+    const openai = new DefaultExecutor("openai");
+    const azure = new AzureExecutor();
+
+    expect(openai.transformRequest("gpt-5.6-sol", { max_tokens: 1024 })).toEqual({
+      max_completion_tokens: 1024,
+    });
+    expect(azure.transformRequest("o3", { max_tokens: 2048 })).toEqual({
+      max_completion_tokens: 2048,
+    });
+  });
+});
 
 describe("stripUnsupportedParams", () => {
   it("flattens Cloudflare AI OpenAI content-part arrays", () => {

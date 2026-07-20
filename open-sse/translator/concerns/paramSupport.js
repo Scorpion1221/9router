@@ -3,6 +3,27 @@ import { getCapabilitiesForModel } from "../../providers/capabilities.js";
 // Strip request params a given provider/model rejects upstream (e.g. HTTP 400).
 // Config-driven: add a rule instead of scattering `delete body.x` across executors.
 
+const MAX_COMPLETION_TOKEN_PROVIDERS = new Set(["openai", "azure"]);
+const REQUIRES_MAX_COMPLETION_TOKENS = /(?:^|\/)(?:gpt-5(?:[.-]|$)|o\d+(?:[.-]|$))/i;
+
+// Official OpenAI-compatible endpoints reject max_tokens for GPT-5/o-series.
+// Run this after model routing so combos are normalized against the selected
+// provider/model, not the combo's public alias.
+export function normalizeMaxCompletionTokens(provider, model, body) {
+  if (!MAX_COMPLETION_TOKEN_PROVIDERS.has(provider) ||
+      !REQUIRES_MAX_COMPLETION_TOKENS.test(model || "") ||
+      !body || typeof body !== "object" ||
+      body.max_tokens === undefined) {
+    return body;
+  }
+
+  if (body.max_completion_tokens === undefined) {
+    body.max_completion_tokens = body.max_tokens;
+  }
+  delete body.max_tokens;
+  return body;
+}
+
 // Each rule: optional provider, regex match on model, list of params to drop.
 // A param is removed only when it is present (!== undefined).
 const STRIP_RULES = [
