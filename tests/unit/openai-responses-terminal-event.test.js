@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { createSSETransformStreamWithLogger } from "../../open-sse/utils/stream.js";
 
-async function runTransform(input) {
+async function runTransform(input, sourceFormat = FORMATS.OPENAI_RESPONSES) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
@@ -15,7 +15,7 @@ async function runTransform(input) {
   const output = stream.pipeThrough(
     createSSETransformStreamWithLogger(
       FORMATS.OPENAI_RESPONSES,
-      FORMATS.OPENAI_RESPONSES,
+      sourceFormat,
       "codex",
       null,
       null,
@@ -38,6 +38,28 @@ async function runTransform(input) {
 }
 
 describe("OpenAI Responses streaming termination", () => {
+  it("emits exactly one DONE when translating Responses SSE to Chat Completions", async () => {
+    const output = await runTransform([
+      `event: response.done`,
+      `data: ${JSON.stringify({ type: "response.done", response: { id: "resp_test" } })}`,
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n"), FORMATS.OPENAI);
+
+    expect(output.match(/data: \[DONE\]/g)).toHaveLength(1);
+  });
+
+  it("adds DONE when a translated Responses stream closes without one", async () => {
+    const output = await runTransform([
+      `event: response.done`,
+      `data: ${JSON.stringify({ type: "response.done", response: { id: "resp_test" } })}`,
+      "",
+    ].join("\n"), FORMATS.OPENAI);
+
+    expect(output.match(/data: \[DONE\]/g)).toHaveLength(1);
+  });
+
   it("emits a response.failed event when a Responses stream closes before a terminal event", async () => {
     const output = await runTransform([
       `event: response.created`,

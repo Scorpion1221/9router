@@ -233,12 +233,13 @@ export function createSSEStream(options = {}) {
             sseEmittedCount++;
           }
 
-          if (keepsOpenAIResponsesFormat && !streamDoneSent) {
-            const doneOutput = "data: [DONE]\n\n";
+          const emitsOpenAIDone = sourceFormat === FORMATS.OPENAI || keepsOpenAIResponsesFormat;
+          if (emitsOpenAIDone && !streamDoneSent) {
+            const doneOutput = SSE_DONE;
             reqLogger?.appendConvertedChunk?.(doneOutput);
             controller.enqueue(sharedEncoder.encode(doneOutput));
           }
-          streamDoneSent = true;
+          if (emitsOpenAIDone) streamDoneSent = true;
           if (keepsOpenAIResponsesFormat) openAIResponsesDoneSent = true;
           continue;
         }
@@ -436,10 +437,18 @@ export function createSSEStream(options = {}) {
         }
 
         if (keepsOpenAIResponsesFormat && !openAIResponsesDoneSent && !streamDoneSent) {
-          const doneOutput = "data: [DONE]\n\n";
+          const doneOutput = SSE_DONE;
           reqLogger?.appendConvertedChunk?.(doneOutput);
           controller.enqueue(sharedEncoder.encode(doneOutput));
           openAIResponsesDoneSent = true;
+          streamDoneSent = true;
+        }
+
+        // Chat Completions clients require the OpenAI [DONE] sentinel even if
+        // a translated upstream stream closes without forwarding its own one.
+        if (sourceFormat === FORMATS.OPENAI && !streamDoneSent) {
+          reqLogger?.appendConvertedChunk?.(SSE_DONE);
+          controller.enqueue(sharedEncoder.encode(SSE_DONE));
           streamDoneSent = true;
         }
 
