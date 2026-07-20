@@ -6,7 +6,8 @@ import Modal from "@/shared/components/Modal";
 import Input from "@/shared/components/Input";
 import Button from "@/shared/components/Button";
 import Badge from "@/shared/components/Badge";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
+import Select from "@/shared/components/Select";
 
 export default function EditConnectionModal({ isOpen, connection, proxyPools, onSave, onClose }) {
   const [formData, setFormData] = useState({
@@ -22,6 +23,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
   const [vertexData, setVertexData] = useState({ llmLocation: "global", embeddingLocation: "us-central1", projectId: "" });
+  const [region, setRegion] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [validating, setValidating] = useState(false);
@@ -56,6 +58,12 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           projectId: psd.projectId || "",
         });
       }
+      // Load region for providers that support it (e.g. xiaomi-tokenplan)
+      const providerCfg = AI_PROVIDERS?.[connection.provider];
+      if (providerCfg?.regions) {
+        const savedRegion = connection.providerSpecificData?.region || providerCfg.defaultRegion || providerCfg.regions[0]?.id || "";
+        setRegion(savedRegion);
+      }
       setTestResult(null);
       setValidationResult(null);
     }
@@ -68,6 +76,13 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   const isCompatible = connection
     ? (isOpenAICompatibleProvider(connection.provider) || isAnthropicCompatibleProvider(connection.provider))
     : false;
+  const providerRegions = connection ? (AI_PROVIDERS?.[connection.provider]?.regions || null) : null;
+
+  // Build providerSpecificData for region-aware providers
+  const buildRegionSpecificData = () => {
+    if (providerRegions && region) return { ...((connection?.providerSpecificData) || {}), region };
+    return undefined;
+  };
 
   const handleTest = async () => {
     if (!connection?.provider) return;
@@ -97,7 +112,11 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           apiKey: formData.apiKey,
           ...(isAzure ? { providerSpecificData: azureData } : {}),
           ...(isCloudflareAi ? { providerSpecificData: cloudflareData } : {}),
-          ...(isVertex ? { providerSpecificData: vertexData } : {}),
+          ...(isVertex
+            ? { providerSpecificData: vertexData }
+            : providerRegions
+              ? { providerSpecificData: buildRegionSpecificData() }
+              : {}),
         }),
       });
       const data = await res.json();
@@ -132,7 +151,11 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
                 apiKey: formData.apiKey,
                 ...(isAzure ? { providerSpecificData: azureData } : {}),
                 ...(isCloudflareAi ? { providerSpecificData: cloudflareData } : {}),
-                ...(isVertex ? { providerSpecificData: vertexData } : {}),
+                ...(isVertex
+                  ? { providerSpecificData: vertexData }
+                  : providerRegions
+                    ? { providerSpecificData: buildRegionSpecificData() }
+                    : {}),
               }),
             });
             const data = await res.json();
@@ -169,6 +192,10 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         if (vertexData.embeddingLocation?.trim()) psd.embeddingLocation = vertexData.embeddingLocation.trim();
         if (vertexData.projectId?.trim()) psd.projectId = vertexData.projectId.trim();
         updates.providerSpecificData = psd;
+      }
+      // Persist updated region for region-aware providers
+      else if (providerRegions && region) {
+        updates.providerSpecificData = buildRegionSpecificData();
       }
       
       await onSave(updates);
@@ -316,6 +343,15 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           </div>
         )}
 
+        {providerRegions && (
+          <Select
+            label="Region"
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            options={providerRegions.map((r) => ({ value: r.id, label: r.label }))}
+          />
+        )}
+
         {!isCompatible && !isAzure && !isCloudflareAi && !isVertex && (
           <div className="flex items-center gap-3">
             <Button onClick={handleTest} variant="secondary" disabled={testing}>
@@ -356,4 +392,3 @@ EditConnectionModal.propTypes = {
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
 };
-
