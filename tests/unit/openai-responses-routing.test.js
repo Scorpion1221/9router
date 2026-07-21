@@ -27,6 +27,9 @@ describe("OpenAIExecutor Responses routing", () => {
 
     expect(executor.shouldUseResponsesEndpoint("gpt-5.6-sol", {
       tools: [tool],
+    })).toBe(true);
+    expect(executor.shouldUseResponsesEndpoint("gpt-5.6-sol", {
+      tools: [tool],
       reasoning_effort: "medium",
     })).toBe(true);
     expect(executor.shouldUseResponsesEndpoint("o4-mini", {
@@ -35,10 +38,9 @@ describe("OpenAIExecutor Responses routing", () => {
     })).toBe(true);
   });
 
-  it("keeps non-reasoning, non-tool, and older-model requests on Chat Completions", () => {
+  it("keeps explicit no-reasoning, non-tool, and older-model requests on Chat Completions", () => {
     const executor = new OpenAIExecutor();
 
-    expect(executor.shouldUseResponsesEndpoint("gpt-5.6-sol", { tools: [tool] })).toBe(false);
     expect(executor.shouldUseResponsesEndpoint("gpt-5.6-sol", {
       tools: [tool],
       reasoning_effort: "none",

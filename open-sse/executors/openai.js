@@ -15,7 +15,10 @@ export class OpenAIExecutor extends DefaultExecutor {
   shouldUseResponsesEndpoint(model, body) {
     const effort = body?.reasoning_effort ?? body?.reasoning?.effort;
     const hasFunctionTools = body?.tools?.some(tool => tool?.type === "function" || tool?.function) === true;
-    return isGpt5OrOSeriesModel(model) && hasFunctionTools && effort != null && effort !== "none";
+    // GPT-5/o-series default to reasoning when no effort is specified, and
+    // OpenAI rejects function tools on /chat/completions in that default mode.
+    // Only an explicit "none" is safe to keep on Chat Completions.
+    return isGpt5OrOSeriesModel(model) && hasFunctionTools && effort !== "none";
   }
 
   async execute(options) {
