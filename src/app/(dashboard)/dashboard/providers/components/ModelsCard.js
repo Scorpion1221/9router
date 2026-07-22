@@ -112,6 +112,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
   const { copied, copy } = useCopyToClipboard();
   const [modelAliases, setModelAliases] = useState({});
   const [customModels, setCustomModels] = useState([]);
+  const [connections, setConnections] = useState([]);
   const [modelTestResults, setModelTestResults] = useState({});
   const [testingModelId, setTestingModelId] = useState(null);
   const [testError, setTestError] = useState("");
@@ -122,16 +123,19 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
 
   const fetchData = useCallback(async () => {
     try {
-      const [aliasRes, customRes] = await Promise.all([
+      const [aliasRes, customRes, connectionsRes] = await Promise.all([
         fetch("/api/models/alias"),
         fetch("/api/models/custom", { cache: "no-store" }),
+        fetch("/api/providers", { cache: "no-store" }),
       ]);
       const aliasData = await aliasRes.json();
       const customData = await customRes.json();
+      const connectionsData = await connectionsRes.json();
       if (aliasRes.ok) setModelAliases(aliasData.aliases || {});
       if (customRes.ok) setCustomModels(customData.models || []);
+      if (connectionsRes.ok) setConnections((connectionsData.connections || []).filter((c) => c.provider === providerId));
     } catch (e) { console.log("ModelsCard fetch error:", e); }
-  }, []);
+  }, [providerId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
