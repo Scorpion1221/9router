@@ -1,5 +1,7 @@
 import { withCodexReviewModels } from "../models/helpers.js";
 
+const CODEX_GPT_CONTEXT_WINDOW = 272000;
+
 export default {
   id: "codex",
   priority: 30,
@@ -45,14 +47,14 @@ export default {
     },
   },
   models: [
-    { id: "gpt-5.6-sol", name: "GPT 5.6 Sol" },
-    { id: "gpt-5.6-sol-review", name: "GPT 5.6 Sol Review", upstreamModelId: "gpt-5.6-sol", quotaFamily: "review" },
-    { id: "gpt-5.6-terra", name: "GPT 5.6 Terra" },
-    { id: "gpt-5.6-terra-review", name: "GPT 5.6 Terra Review", upstreamModelId: "gpt-5.6-terra", quotaFamily: "review" },
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
-    { id: "gpt-5.6-luna-review", name: "GPT 5.6 Luna Review", upstreamModelId: "gpt-5.6-luna", quotaFamily: "review" },
-    { id: "gpt-5.5", name: "GPT 5.5" },
-    { id: "gpt-5.5-review", name: "GPT 5.5 Review", upstreamModelId: "gpt-5.5", quotaFamily: "review" },
+    { id: "gpt-5.6-sol", name: "GPT 5.6 Sol", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-5.6-sol-review", name: "GPT 5.6 Sol Review", upstreamModelId: "gpt-5.6-sol", quotaFamily: "review", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-5.6-terra", name: "GPT 5.6 Terra", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-5.6-terra-review", name: "GPT 5.6 Terra Review", upstreamModelId: "gpt-5.6-terra", quotaFamily: "review", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-5.6-luna-review", name: "GPT 5.6 Luna Review", upstreamModelId: "gpt-5.6-luna", quotaFamily: "review", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-5.5", name: "GPT 5.5", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-5.5-review", name: "GPT 5.5 Review", upstreamModelId: "gpt-5.5", quotaFamily: "review", contextWindow: CODEX_GPT_CONTEXT_WINDOW },
     { id: "gpt-5.4", name: "GPT 5.4" },
     { id: "gpt-5.4-review", name: "GPT 5.4 Review", upstreamModelId: "gpt-5.4", quotaFamily: "review" },
     { id: "gpt-5.4-mini", name: "GPT 5.4 Mini" },
