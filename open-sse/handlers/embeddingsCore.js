@@ -149,6 +149,7 @@ export async function handleEmbeddingsCore({
 
   return {
     success: true,
+    usage: normalized.usage || null,
     response: new Response(JSON.stringify(normalized), {
       headers: {
         "Content-Type": "application/json",

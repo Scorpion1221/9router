@@ -83,9 +83,9 @@ export async function GET(request) {
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
-      "X-Accel-Buffering": "no",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-cache, no-transform",
       "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 }
