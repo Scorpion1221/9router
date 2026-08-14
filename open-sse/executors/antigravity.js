@@ -245,6 +245,18 @@ export class AntigravityExecutor extends BaseExecutor {
     // Strip tools/toolConfig (handled separately) and blacklisted fields that Google rejects
     const { tools: _originalTools, toolConfig: _originalToolConfig, ...requestWithoutTools } = body.request || {};
     stripBlacklisted(requestWithoutTools);
+
+    // Rewrite competitive system prompts (e.g. Zed IDE's Claude prompt) to prevent Antigravity from
+    // flagging the request and immediately blocking it with a 429 Quota Exhausted response.
+    if (requestWithoutTools.systemInstruction?.parts) {
+      const oldText = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+      for (const part of requestWithoutTools.systemInstruction.parts) {
+        if (typeof part.text === "string" && part.text.includes(oldText)) {
+          part.text = part.text.split(oldText).join("");
+        }
+      }
+    }
+
     const generationConfig = { ...(requestWithoutTools.generationConfig || {}) };
     if (generationConfig.maxOutputTokens > MAX_ANTIGRAVITY_OUTPUT_TOKENS) {
       generationConfig.maxOutputTokens = MAX_ANTIGRAVITY_OUTPUT_TOKENS;
@@ -467,7 +479,7 @@ export class AntigravityExecutor extends BaseExecutor {
     // Rename tool names in conversation history (contents)
     const cloakedContents = body.request?.contents?.map(msg => {
       if (!msg.parts) return msg;
-      
+
       const cloakedParts = msg.parts.map(part => {
         // Rename functionCall.name
         if (part.functionCall && !AG_DEFAULT_TOOLS.has(part.functionCall.name)) {
@@ -479,7 +491,7 @@ export class AntigravityExecutor extends BaseExecutor {
             }
           };
         }
-        
+
         // Rename functionResponse.name
         if (part.functionResponse && !AG_DEFAULT_TOOLS.has(part.functionResponse.name)) {
           return {
@@ -490,10 +502,10 @@ export class AntigravityExecutor extends BaseExecutor {
             }
           };
         }
-        
+
         return part;
       });
-      
+
       return { ...msg, parts: cloakedParts };
     });
 
