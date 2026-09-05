@@ -326,13 +326,17 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
 
   for (const msg of messages) {
     if (msg.role === ROLE.SYSTEM || msg.role === ROLE.DEVELOPER) {
-      // Use the first instruction-bearing message as instructions.
-      // OpenAI recommends role="developer" for GPT-5/Codex as the system-level prompt.
+      const text = typeof msg.content === "string" ? msg.content
+        : Array.isArray(msg.content) ? msg.content.map((part) => part?.text || "").join("\n") : "";
+      // Preserve the existing single-prompt wire shape. Additional instructions
+      // stay at their original conversation positions instead of being dropped.
       if (!hasInstructionMessage) {
-        result.instructions = typeof msg.content === "string" ? msg.content : "";
+        result.instructions = text;
         hasInstructionMessage = true;
+      } else {
+        result.input.push({ type: RESPONSES_ITEM.MESSAGE, role: msg.role, content: [{ type: RESPONSES_ITEM.INPUT_TEXT, text }] });
       }
-      continue; // Skip instruction messages in input
+      continue;
     }
 
     // Convert user/assistant messages to input items

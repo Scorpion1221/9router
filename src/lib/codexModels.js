@@ -85,7 +85,7 @@ export function normalizeCodexModels(data) {
       ...getCapabilitiesForModel("codex", id),
       ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
       ...(model.maxOutput ? { maxOutput: model.maxOutput } : {}),
-      ...(levels.length ? { reasoning: true } : {}),
+      ...(levels.length ? { reasoning: true, thinkingFormat: "openai" } : {}),
       ...(Array.isArray(entry.input_modalities) ? { vision: entry.input_modalities.includes("image") } : {}),
     };
     models.set(id, model);

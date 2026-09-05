@@ -345,12 +345,12 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels) {
 // Mutates and returns body. No-op when model has no reasoning capability.
 // `intent` is a pre-captured config (from captureThinking on the original body);
 // falls back to extracting from the current body when omitted.
-export function applyThinking(targetFormat, model, body, provider = null, intent = undefined) {
+export function applyThinking(targetFormat, model, body, provider = null, intent = undefined, modelMetadata = undefined) {
   if (!body || typeof body !== "object") return body;
 
   const { cleanModel, override } = parseSuffix(model);
   const cfg = override || intent || extractThinking(body);
-  const caps = getCapabilitiesForModel(provider, cleanModel);
+  const caps = modelMetadata?.capabilities || getCapabilitiesForModel(provider, cleanModel);
 
   // Model cannot reason → strip any stray thinking fields.
   if (!caps.reasoning) {
@@ -359,8 +359,8 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   }
   if (!cfg) return body;
 
-  const fmt = resolveFormat(targetFormat, cleanModel, provider);
-  const supportedLevels = getThinkingLevels(provider, cleanModel);
+  const fmt = modelMetadata?.capabilities?.thinkingFormat || resolveFormat(targetFormat, cleanModel, provider);
+  const supportedLevels = modelMetadata?.reasoningLevels || getThinkingLevels(provider, cleanModel);
   stripAll(body);
   applyFormat(fmt, body, cfg, caps, supportedLevels);
   return body;

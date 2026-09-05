@@ -1340,6 +1340,12 @@ forces a refresh. Failed refreshes retain the last successful catalog (persisted
 across restarts); a cold failure uses the built-in fallback. Explicit enabled,
 disabled, custom models and image routes remain intact.
 
+The selected account's native capability and reasoning-level metadata also
+travels with each inference request, so newly discovered models are not limited
+by stale reasoning/vision tables. Metadata is request-scoped, not shared between
+accounts. Multiple system/developer messages retain their instruction text and
+conversation positions when translated to Responses.
+
 Set `CODEX_MODELS_CLIENT_VERSION` only to pin a tested discovery version during
 an upstream compatibility incident. New IDs normally need no router release;
 upstream authentication or protocol changes still can. Discovery is not an

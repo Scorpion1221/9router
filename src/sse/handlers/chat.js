@@ -251,6 +251,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+    if (provider === "codex") {
+      // Bind capabilities to this request's selected account, not a process-wide
+      // union: new models must not lose reasoning or image input to stale tables.
+      const { resolveCodexModels } = await import("@/lib/codexModels");
+      const catalog = await resolveCodexModels({ ...credentials._connection, ...refreshedCredentials, id: credentials.connectionId });
+      const baseModel = model.replace(/\([^()]+\)\s*$/, "").trim();
+      refreshedCredentials.codexModelMetadata = catalog.models.find((entry) => entry.id === baseModel);
+    }
 
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
     if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
