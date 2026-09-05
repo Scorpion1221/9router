@@ -1155,7 +1155,7 @@ export default function ProviderDetailPage() {
               isTesting={testingModelIds.has(model.id)}
               isFree={model.isFree}
               onDisable={() => handleDisableModel(model.id)}
-              caps={getCaps(`${providerId}/${model.id}`)}
+              caps={model.source === "codex" ? model.capabilities : getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
             />
           );

@@ -1328,6 +1328,24 @@ container preserves it; only `docker compose down -v` destroys it.
 
 **Data persistence:** `$HOME/.9router/db/data.sqlite` on host ↔ `/app/data/db/data.sqlite` in container.
 
+### Codex native model discovery
+
+Codex model pickers and `/v1/models` share the native catalog of active Codex
+accounts, rather than treating OpenRouter's OpenAI catalog as account access.
+Discovery reads the official stable `@openai/codex` version metadata and uses it
+as `client_version`; it does not install or execute a local Codex CLI, or change
+the inference User-Agent. Version and per-account catalogs are cached for ten
+minutes; open pickers poll every ten minutes. `GET /api/models/codex?refresh=true`
+forces a refresh. Failed refreshes retain the last successful catalog (persisted
+across restarts); a cold failure uses the built-in fallback. Explicit enabled,
+disabled, custom models and image routes remain intact.
+
+Set `CODEX_MODELS_CLIENT_VERSION` only to pin a tested discovery version during
+an upstream compatibility incident. New IDs normally need no router release;
+upstream authentication or protocol changes still can. Discovery is not an
+inference canary: model access, available quota and transport support must also
+permit the request. Catalog reads never trigger paid generation probes.
+
 ### Environment Variables
 
 | Variable                                             | Default                                  | Description                                                                         |

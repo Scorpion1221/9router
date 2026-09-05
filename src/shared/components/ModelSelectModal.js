@@ -370,7 +370,7 @@ export default function ModelSelectModal({
           .map((m) => ({ id: m.id, name: m.name || m.id, value: `${alias}/${m.id}`, isCustom: true }));
 
         const merged = [
-          ...hardcodedModels.map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) })),
+          ...hardcodedModels.map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m), caps: m.source === "codex" ? m.capabilities : undefined })),
           ...customAliasModels,
           ...customRegisteredModels,
         ];
@@ -441,7 +441,7 @@ export default function ModelSelectModal({
       let models = group.models;
       // Filter by input-modality capability (vision/pdf/audioInput/videoInput).
       if (capFilter) {
-        models = models.filter((m) => getCaps(m.value)?.[capFilter] === true);
+        models = models.filter((m) => (m.caps || getCaps(m.value))?.[capFilter] === true);
         if (models.length === 0) return;
       }
       if (query) {
@@ -604,12 +604,12 @@ export default function ModelSelectModal({
                         <>
                           {model.name}
                           <span className="text-[9px] opacity-60 font-normal">custom</span>
-                          <CapacityBadges caps={getCaps(model.value)} />
+                          <CapacityBadges caps={model.caps || getCaps(model.value)} />
                         </>
                       ) : (
                         <>
                           {model.name}
-                          <CapacityBadges caps={getCaps(model.value)} />
+                          <CapacityBadges caps={model.caps || getCaps(model.value)} />
                         </>
                       )}
                     </span>

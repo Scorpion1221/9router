@@ -23,6 +23,8 @@
 // request per provider but reuses the same family-dedup logic.
 //
 // Resolution rules per provider (in order):
+//   Codex: native account catalog (10-minute cache/refresh), static on cold failure.
+//   Other providers:
 //   1. Build candidates = static PROVIDER_MODELS[alias] ∪ kiloFreeModels (kilocode only)
 //      ∪ OR-detected models from /api/openrouter/models?provider=<id>.
 //   2. Group by familyKey() — collapses dated snapshots into their latest
@@ -57,6 +59,11 @@ function mergeModels(providerId, kiloModels, orModelsList) {
     ...m,
     source: "static",
   }));
+  // Codex availability comes from the native account catalog, not all OpenAI
+  // models sold by OpenRouter. Keep static media-only entries and cold fallback.
+  if (providerId === "codex" && orModelsList?.length) {
+    return [...orModelsList, ...staticModels.filter((m) => (m.kind || m.type || "llm") !== "llm")];
+  }
   const kilo = (kiloModels || []).map((m) => ({ ...m, source: "kilo" }));
   const or = (orModelsList || []).map((m) => ({
     ...m,
@@ -108,9 +115,9 @@ export function useProviderModels(providerIdOrIds, { kindFilter } = {}) {
     if (providerIds.length === 0) return;
     let cancelled = false;
     setLoading(true);
-    Promise.all(
+    const refresh = () => Promise.all(
       providerIds.map((id) =>
-        fetch(`/api/openrouter/models?provider=${encodeURIComponent(id)}`)
+        fetch(id === "codex" ? "/api/models/codex" : `/api/openrouter/models?provider=${encodeURIComponent(id)}`)
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => [id, Array.isArray(data?.models) ? data.models : []])
           .catch(() => [id, []]),
@@ -120,7 +127,7 @@ export function useProviderModels(providerIdOrIds, { kindFilter } = {}) {
         if (cancelled) return;
         const next = {};
         for (const [id, models] of entries) next[id] = models;
-        setOrByProvider(next);
+        setOrByProvider((previous) => ({ ...next, ...(next.codex?.length === 0 && previous.codex?.length ? { codex: previous.codex } : {}) }));
         setError(null);
       })
       .catch((err) => {
@@ -129,7 +136,9 @@ export function useProviderModels(providerIdOrIds, { kindFilter } = {}) {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    refresh();
+    const timer = providerIds.includes("codex") ? setInterval(refresh, 10 * 60 * 1000) : null;
+    return () => { cancelled = true; if (timer) clearInterval(timer); };
   // providerIdsKey is the stable identity — refetch only when the set changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerIdsKey]);

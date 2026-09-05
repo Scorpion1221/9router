@@ -8,6 +8,7 @@ import {
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveModelInfo } from "@/lib/modelInfo";
+import { getCodexModelCatalog } from "@/lib/codexModels";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
@@ -24,6 +25,7 @@ import { capabilitiesFromServiceKind, getCapabilitiesForModel } from "open-sse/p
 // returns { models: [{ id, name? }, ...] } | null on failure.
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
+  codex: (_conn, connections) => getCodexModelCatalog(connections),
   kiro: async (conn) => {
     const result = await resolveKiroModels({
       accessToken: conn.accessToken,
@@ -386,16 +388,21 @@ export async function buildModelsList(kindFilter, options = {}) {
       const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
       if (liveResolver && !hasExplicitEnabledModels) {
         try {
-          const live = await liveResolver(conn);
+          const live = await liveResolver(conn, connections);
           if (live?.models?.length) {
-            rawModelIds = live.models.map((m) => m.id);
+            // Codex's native manifest lists chat models only. Its separately
+            // routed image models must not disappear from /v1/models/image.
+            const liveModels = providerId === "codex"
+              ? [...live.models, ...providerModels.filter((m) => modelKind(m) !== LLM_KIND)]
+              : live.models;
+            rawModelIds = liveModels.map((m) => m.id);
             liveModelKindById = new Map(
-              live.models
+              liveModels
                 .filter((m) => m?.id)
                 .map((m) => [m.id, modelKind(m)])
             );
             liveCapabilitiesById = new Map(
-              live.models
+              liveModels
                 .filter((m) => m?.id && m.capabilities)
                 .map((m) => [m.id, m.capabilities])
             );

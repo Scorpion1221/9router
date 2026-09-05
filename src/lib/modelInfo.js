@@ -11,6 +11,7 @@ import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { lookupModelMetadata } from "open-sse/services/openrouterSync.js";
 import { getComboByName } from "@/lib/db";
+import { getCodexModelCatalog } from "./codexModels.js";
 
 export const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -46,6 +47,9 @@ export async function buildInfo({ alias, providerId, model, kind, providerInfo }
   if (model.options) out.options = model.options;
   if (model.dimensions) out.dimensions = model.dimensions;
   if (model.contextWindow) out.contextWindow = model.contextWindow;
+  if (model.maxOutput) out.maxOutput = model.maxOutput;
+  if (model.reasoningLevels) out.reasoningLevels = model.reasoningLevels;
+  if (model.defaultReasoningLevel) out.defaultReasoningLevel = model.defaultReasoningLevel;
   if (kind === "tts" && TTS_VOICES_API.has(providerId)) {
     out.voicesUrl = `/v1/audio/voices?provider=${providerId}`;
   }
@@ -61,7 +65,7 @@ export async function buildInfo({ alias, providerId, model, kind, providerInfo }
     const or = await lookupModelMetadata(providerId, model.id);
     if (or) {
       if (!out.contextWindow && or.contextWindow) out.contextWindow = or.contextWindow;
-      if (or.maxOutput) out.maxOutput = or.maxOutput;
+      if (!out.maxOutput && or.maxOutput) out.maxOutput = or.maxOutput;
       const pricing = {};
       if (or.inputPrice != null) pricing.input = or.inputPrice;
       if (or.outputPrice != null) pricing.output = or.outputPrice;
@@ -133,6 +137,14 @@ export async function resolveModelInfo(fullId, requestedKind = null) {
   const modelId = fullId.slice(slash + 1);
   const providerId = ALIAS_TO_ID[alias] || alias;
   const providerInfo = AI_PROVIDERS[providerId];
+
+  if (providerId === "codex" && (!requestedKind || requestedKind === "llm")) {
+    try {
+      const catalog = await getCodexModelCatalog();
+      const model = catalog.models.find((entry) => entry.id === modelId);
+      if (model) return await buildInfo({ alias, providerId, model, kind: "llm", providerInfo });
+    } catch { /* Static/user-added model metadata remains the fallback. */ }
+  }
 
   const list = PROVIDER_MODELS[alias] || PROVIDER_MODELS[providerId] || [];
   const m = requestedKind
