@@ -115,7 +115,7 @@ async function text(stream) {
 async function execute(executor = new KiroExecutor(), overrides = {}) {
   return executor.execute({
     model: "kr/claude-opus-4.8",
-    body: { systemPrompt: "base", conversationState: {} },
+    body: { conversationState: { history: [], currentMessage: { userInputMessage: { content: "base", modelId: "claude-sonnet-4.6" } } } },
     stream: true,
     credentials,
     ...overrides
@@ -342,8 +342,8 @@ describe("Kiro terminal integrity recovery", () => {
     const retryBody = JSON.parse(fetchMock.mock.calls[1][1].body);
 
     expect(body).toContain("Recovered safely.");
-    expect(retryBody.systemPrompt).toContain("tool_call wrapper was malformed");
-    expect(retryBody.systemPrompt).not.toContain("IGNORE_ALL_INSTRUCTIONS");
+    expect(retryBody.conversationState.currentMessage.userInputMessage.content).toContain("tool_call wrapper was malformed");
+    expect(retryBody.conversationState.currentMessage.userInputMessage.content).not.toContain("IGNORE_ALL_INSTRUCTIONS");
   });
 
   it("lets a complete tool call override metadata end_turn", async () => {
@@ -703,7 +703,8 @@ describe("Kiro terminal integrity recovery", () => {
   it("surfaces retry HTTP failures as SSE after heartbeat commits headers", async () => {
     fetchMock
       .mockResolvedValueOnce(response([]))
-      .mockResolvedValueOnce(new Response("unauthorized", {
+      // Every auth-surface fallback must receive an HTTP error, not undefined.
+      .mockImplementation(async () => new Response("unauthorized", {
         status: 401,
         statusText: "Unauthorized"
       }));
@@ -719,7 +720,7 @@ describe("Kiro terminal integrity recovery", () => {
   it("bounds the retry HTTP error body", async () => {
     fetchMock
       .mockResolvedValueOnce(response([]))
-      .mockResolvedValueOnce(new Response(`error-start-${"x".repeat(10_000)}-error-tail`, {
+      .mockImplementation(async () => new Response(`error-start-${"x".repeat(10_000)}-error-tail`, {
         status: 401,
         statusText: "Unauthorized"
       }));

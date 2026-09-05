@@ -11,7 +11,10 @@ import { openaiToKiroRequest } from "../../open-sse/translator/request/openai-to
 
 const contentOf = (result) =>
   result.conversationState.currentMessage.userInputMessage.content;
-const systemPromptOf = (result) => result.systemPrompt || "";
+// Assert instruction semantics in the actual wire conversation, not internal state.
+const systemPromptOf = (result) => [
+  ...(result.conversationState.history || []), result.conversationState.currentMessage,
+].map((m) => m.userInputMessage?.content || "").join("\n");
 
 describe("openaiToKiroRequest", () => {
   describe("basic message conversion", () => {
@@ -568,7 +571,7 @@ describe("openaiToKiroRequest", () => {
       expect(systemPromptOf(result)).toContain("<max_thinking_length>16000</max_thinking_length>");
     });
 
-    it("keeps top-level systemPrompt stable across turns", () => {
+    it("keeps thinking prefix stable without serializing a top-level systemPrompt", () => {
       const first = openaiToKiroRequest(
         "claude-sonnet-4.6-thinking",
         { messages: [{ role: "user", content: "first" }] },
@@ -582,8 +585,12 @@ describe("openaiToKiroRequest", () => {
         {}
       );
 
-      expect(first.systemPrompt).toBe(second.systemPrompt);
-      expect(first.systemPrompt).not.toContain("Current time");
+      expect(first).not.toHaveProperty("systemPrompt");
+      expect(second).not.toHaveProperty("systemPrompt");
+      const prefix = (result) => systemPromptOf(result).split("[Context:")[0];
+      expect(prefix(first)).toContain("<max_thinking_length>16000</max_thinking_length>");
+      expect(prefix(first)).toBe(prefix(second));
+      expect(prefix(first)).not.toContain("Current time");
       expect(first.conversationState.currentMessage.userInputMessage.content).toContain("Current time");
     });
 

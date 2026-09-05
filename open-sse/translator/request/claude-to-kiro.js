@@ -242,9 +242,8 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
     ? (credentials?.providerSpecificData?.profileArn || "")
     : (credentials?.providerSpecificData?.profileArn || resolveDefaultProfileArn(authMethod));
 
-  // Kiro CLI/KAS sends system prompt as top-level `systemPrompt`. Keep a
-  // content fallback too because the CodeWhisperer surface does not always
-  // enforce top-level systemPrompt for direct calls.
+  // Keep these instructions in the frozen first conversation turn. A top-level
+  // systemPrompt is rejected by Kiro; the internal value still keys replay.
   const timestamp = new Date().toISOString();
   const systemPromptParts = [];
   if (thinkingBudget !== null && !usesNativeGptEffort) {
@@ -327,7 +326,6 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
   };
 
   if (profileArn) payload.profileArn = profileArn;
-  if (systemPrompt) payload.systemPrompt = systemPrompt;
   if (additionalModelRequestFields) {
     payload.additionalModelRequestFields = additionalModelRequestFields;
   }
