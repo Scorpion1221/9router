@@ -28,8 +28,12 @@ export default {
     { id: "gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash Lite Preview" },
     { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview" },
     { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "veo-3.1-generate-preview", name: "Veo 3.1 (Preview)", params: ["duration","aspect_ratio","resolution","negative_prompt","seed","storage_uri","generate_audio"], kind: "video" },
+    { id: "veo-3.1-fast-generate-preview", name: "Veo 3.1 Fast (Preview)", params: ["duration","aspect_ratio","resolution","negative_prompt","seed","storage_uri","generate_audio"], kind: "video" },
+    { id: "veo-3.0-generate-001", name: "Veo 3", params: ["duration","aspect_ratio","resolution","negative_prompt","seed","storage_uri","generate_audio"], kind: "video" },
+    { id: "veo-2.0-generate-001", name: "Veo 2", params: ["duration","aspect_ratio","negative_prompt","seed","storage_uri"], kind: "video" },
   ],
-  serviceKinds: ["llm", "embedding", "imageToText"],
+  serviceKinds: ["llm", "embedding", "imageToText", "video"],
   embeddingConfig: {
     baseUrl: "https://aiplatform.googleapis.com/v1/publishers/google/models",
     authType: "apikey",
@@ -41,4 +45,8 @@ export default {
       { id: "text-multilingual-embedding-002", name: "Text Multilingual Embedding 002", dimensions: 768 },
     ],
   },
+
+  // Veo via predictLongRunning + fetchPredictOperation (adapter: handlers/videoProviders/vertex.js).
+  // Docs: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/veo-video-generation
+  videoConfig: { baseUrl: "https://aiplatform.googleapis.com" },
 };

@@ -342,8 +342,9 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
 
   const timestamp = new Date().toISOString();
 
-  // Keep these instructions in the frozen first conversation turn. A top-level
-  // systemPrompt is rejected by Kiro; the internal value still keys replay.
+  // The system prompt travels inside the first user turn's content (contentPrefix):
+  // the CodeWhisperer surface rejects a top-level `systemPrompt` with
+  // 400 REQUEST_BODY_INVALID, so the value below is only a replay cache key.
   const systemPromptParts = [];
   if (thinkingBudget !== null && !usesNativeGptEffort) {
     systemPromptParts.push(buildThinkingSystemPrefix(thinkingBudget));
@@ -398,8 +399,6 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
     conversationState: {
       chatTriggerType: "MANUAL",
       conversationId,
-      agentContinuationId: continuationId,
-      agentTaskType: "vibe",
       currentMessage: {
         userInputMessage: {
           content: replayCurrent.content || "",
@@ -415,7 +414,6 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
       },
       history: canonical.history
     },
-    agentMode: "vibe",
   };
 
   if (profileArn) {

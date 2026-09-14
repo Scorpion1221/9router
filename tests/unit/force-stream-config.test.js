@@ -71,6 +71,8 @@ vi.mock("../../open-sse/rtk/index.js", () => ({
 vi.mock("../../open-sse/rtk/headroom.js", () => ({
   compressWithHeadroom: vi.fn(async () => null),
   formatHeadroomLog: vi.fn(() => ""),
+  formatHeadroomSizeLog: vi.fn(() => ""),
+  isHeadroomPhantomSavings: vi.fn(() => false),
 }));
 
 vi.mock("../../open-sse/providers/capabilities.js", () => ({
@@ -142,12 +144,20 @@ describe("forceStream provider config", () => {
     }
   });
 
-  it.each([undefined, false])( "keeps forced-stream providers streaming for JSON clients when body.stream is %s", async (bodyStream) => {
+  it.each([
+    ["openai", undefined, true],
+    ["openai", false, false],
+    ["codex", undefined, true],
+    ["codex", false, true],
+    ["commandcode", false, true],
+  ])("uses %s stream=%s with expected upstream streaming=%s", async (provider, bodyStream, expectedStream) => {
     const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
 
-    await handleChatCore(makeOptions(bodyStream));
+    const options = makeOptions(bodyStream);
+    options.modelInfo.provider = provider;
+    await handleChatCore(options);
 
     expect(executeMock).toHaveBeenCalledTimes(1);
-    expect(executeMock.mock.calls[0][0].stream).toBe(true);
+    expect(executeMock.mock.calls[0][0].stream).toBe(expectedStream);
   });
 });

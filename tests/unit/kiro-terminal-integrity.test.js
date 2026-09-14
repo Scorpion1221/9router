@@ -342,8 +342,12 @@ describe("Kiro terminal integrity recovery", () => {
     const retryBody = JSON.parse(fetchMock.mock.calls[1][1].body);
 
     expect(body).toContain("Recovered safely.");
-    expect(retryBody.conversationState.currentMessage.userInputMessage.content).toContain("tool_call wrapper was malformed");
-    expect(retryBody.conversationState.currentMessage.userInputMessage.content).not.toContain("IGNORE_ALL_INSTRUCTIONS");
+    // The repair instruction rides in the user turn: kiro.dev rejects a
+    // top-level systemPrompt with 400 REQUEST_BODY_INVALID.
+    const retryContent = retryBody.conversationState.currentMessage.userInputMessage.content;
+    expect(retryBody.systemPrompt).toBeUndefined();
+    expect(retryContent).toContain("tool_call wrapper was malformed");
+    expect(retryContent).not.toContain("IGNORE_ALL_INSTRUCTIONS");
   });
 
   it("lets a complete tool call override metadata end_turn", async () => {
