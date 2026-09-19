@@ -125,7 +125,6 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       }
       // Skip items with empty/missing name — Codex/OpenAI reject nameless tool calls (#444)
       if (!item.name || typeof item.name !== "string" || item.name.trim() === "") continue;
-      if (itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL) customToolNames.add(item.name);
       const toolInput = itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL
         ? { input: typeof item.input === "string" ? item.input : JSON.stringify(item.input ?? "") }
         : item.arguments;
@@ -133,11 +132,13 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       // or the upstream sees a call for a tool it was never offered. Codex carries the
       // namespace as a sibling field of `name` on the item.
       if (item.namespace) nsToolNames.ns[item.name] = item.namespace;
+      const replayWireName = recordWireName(item.namespace ? `${item.namespace}.${item.name}` : item.name);
+      if (itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL) customToolNames.add(replayWireName);
       currentAssistantMsg.tool_calls.push({
         id: item.call_id,
         type: OPENAI_BLOCK.FUNCTION,
         function: {
-          name: recordWireName(item.namespace ? `${item.namespace}.${item.name}` : item.name),
+          name: replayWireName,
           arguments: typeof toolInput === "string" ? toolInput : JSON.stringify(toolInput ?? {})
         }
       });
@@ -198,6 +199,46 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
     ...(Array.isArray(body.tools) ? body.tools : []),
     ...additionalTools,
   ];
+  // Convert one Responses tool (function or freeform custom) into a Chat Completions
+  // function under `wireName`. Shared by top-level tools and namespace sub-tools —
+  // a namespace may hold custom tools too (codex ships `functions.exec` as one), and
+  // announcing those as plain functions makes the client reject the call it gets back
+  // with "invoked with incompatible payload".
+  const toChatFunction = (tool, wireName, fallbackDescription = "") => {
+    if (tool.type === "custom") {
+      // Matched against the name the model answers with, i.e. the wire name.
+      customToolNames.add(wireName);
+      const formatHint = [tool.format?.syntax, tool.format?.definition].filter(Boolean).join("\n");
+      return {
+        type: OPENAI_BLOCK.FUNCTION,
+        function: {
+          name: wireName,
+          description: [String(tool.description || fallbackDescription || ""), formatHint].filter(Boolean).join("\n\n"),
+          parameters: {
+            type: "object",
+            properties: {
+              input: {
+                type: "string",
+                description: "Raw freeform input for this custom tool"
+              }
+            },
+            required: ["input"],
+            additionalProperties: false
+          }
+        }
+      };
+    }
+    return {
+      type: OPENAI_BLOCK.FUNCTION,
+      function: {
+        name: wireName,
+        description: String(tool.description || fallbackDescription || ""),
+        parameters: normalizeToolParameters(tool.parameters),
+        strict: tool.strict
+      }
+    };
+  };
+
   if (responseTools.length > 0) {
     result.tools = responseTools
       .flatMap(tool => {
@@ -223,15 +264,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
               // Keep a flat-name -> namespace map so the response side can route a
               // tool call that arrives by flat name (wait_agent, not collaboration.wait_agent).
               if (ns) nsToolNames.ns[sub.name] = ns;
-              return {
-                type: OPENAI_BLOCK.FUNCTION,
-                function: {
-                  name: recordWireName(ns ? `${ns}.${sub.name}` : sub.name),
-                  description: String(sub.description || tool.description || ""),
-                  parameters: normalizeToolParameters(sub.parameters),
-                  strict: sub.strict
-                }
-              };
+              return toChatFunction(sub, recordWireName(ns ? `${ns}.${sub.name}` : sub.name), tool.description);
             });
         }
         // Responses API function/custom tool: { type, name, description, parameters|format }.
@@ -242,40 +275,8 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         if (!name || typeof name !== "string" || name.trim() === "") return null;
         // Some providers reject dotted tool names; sanitize every function/custom tool
         // name and keep the map so the response side restores the original.
-        const safeName = recordWireName(name);
-        if (tool.type === "custom") {
-          customToolNames.add(name);
-          const formatHint = [tool.format?.syntax, tool.format?.definition].filter(Boolean).join("\n");
-          return {
-            type: OPENAI_BLOCK.FUNCTION,
-            function: {
-              name: safeName,
-              description: [String(tool.description || ""), formatHint].filter(Boolean).join("\n\n"),
-              parameters: {
-                type: "object",
-                properties: {
-                  input: {
-                    type: "string",
-                    description: "Raw freeform input for this custom tool"
-                  }
-                },
-                required: ["input"],
-                additionalProperties: false
-              }
-            }
-          };
-        }
-        // Responses API function tool: { type: "function", name, description, parameters }
         // Only convert when a non-empty name is present; skip hosted tools without one.
-        return {
-          type: OPENAI_BLOCK.FUNCTION,
-          function: {
-            name: safeName,
-            description: String(tool.description || ""),
-            parameters: normalizeToolParameters(tool.parameters),
-            strict: tool.strict
-          }
-        };
+        return toChatFunction(tool, recordWireName(name));
       })
       .filter(Boolean);
   }

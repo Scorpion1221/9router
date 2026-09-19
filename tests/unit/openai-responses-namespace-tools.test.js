@@ -58,6 +58,34 @@ describe("Responses namespace tools — request", () => {
     expect(globalThis.__CB_TOOL_MAP__).toBeUndefined();
   });
 
+  it("keeps a custom sub-tool custom (codex ships `functions.exec` that way)", () => {
+    // A namespace may mix freeform custom tools with plain functions. Announcing the
+    // custom one as a plain function makes the client reject the call it gets back with
+    // "tool exec invoked with incompatible payload".
+    const out = translate([{
+      type: "namespace",
+      name: "functions",
+      description: "core tools",
+      tools: [
+        { type: "custom", name: "exec", description: "run a command", format: { syntax: "bash", definition: "cmd" } },
+        { type: "function", name: "wait", description: "wait", parameters: { type: "object" } },
+      ],
+    }]);
+
+    const exec = out.tools.find((t) => t.function.name === "functions__exec");
+    expect(exec.function.parameters).toEqual({
+      type: "object",
+      properties: { input: { type: "string", description: "Raw freeform input for this custom tool" } },
+      required: ["input"],
+      additionalProperties: false,
+    });
+    expect(exec.function.description).toContain("bash");
+    // Matched against the name the model answers with, so the response side emits
+    // custom_tool_call rather than function_call.
+    expect(out._customToolNames).toContain("functions__exec");
+    expect(out._customToolNames).not.toContain("functions__wait");
+  });
+
   it("leaves flat tool names unchanged and emits no mapping", () => {
     const out = translate([{ type: "function", name: "get_weather", description: "w", parameters: { type: "object" } }]);
     expect(toolNames(out)).toEqual(["get_weather"]);
