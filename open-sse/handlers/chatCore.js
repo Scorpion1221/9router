@@ -506,7 +506,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const respCType = providerResponse.headers.get("content-type") || "";
   if (!respCType.includes("text/event-stream") && respCType.includes("application/json")) {
     log?.debug?.("FORMAT", `Upstream returned ${respCType} despite stream=true — falling back to JSON`);
-    const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, reqLogger, toolNameMap, trackDone, appendLog });
+    const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, reqLogger, toolNameMap, customToolNames, namespaceTools, trackDone, appendLog });
     streamController.handleComplete();
     return result;
   }
