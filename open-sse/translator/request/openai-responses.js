@@ -13,8 +13,10 @@ import {
   coerceResponsesOutput,
 } from "../formats/responsesApi.js";
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
+import { toWireToolName } from "../concerns/toolCall.js";
 
 const MAX_TOOL_NAME_LEN = 128;
+
 
 /**
  * Convert OpenAI Responses API request to OpenAI Chat Completions format
@@ -37,6 +39,16 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   let pendingReasoningEncrypted = "";
   const additionalTools = [];
   const customToolNames = new Set();
+  // Per-request tool-name bookkeeping handed to the response translator:
+  //   wire  — sanitized wire name → original dotted name
+  //   ns    — bare sub-tool name → its namespace, so a model that answers with the
+  //           bare name (`wait_agent` rather than `collaboration.wait_agent`) still routes.
+  const nsToolNames = { wire: {}, ns: {} };
+  const recordWireName = (original) => {
+    const wire = toWireToolName(original);
+    if (wire !== original) nsToolNames.wire[wire] = original;
+    return wire;
+  };
 
   const inputItems = normalizeResponsesInput(body.input);
   if (!inputItems) return body;
@@ -117,11 +129,15 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       const toolInput = itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL
         ? { input: typeof item.input === "string" ? item.input : JSON.stringify(item.input ?? "") }
         : item.arguments;
+      // Replayed history must use the same wire name the tool was declared under,
+      // or the upstream sees a call for a tool it was never offered. Codex carries the
+      // namespace as a sibling field of `name` on the item.
+      if (item.namespace) nsToolNames.ns[item.name] = item.namespace;
       currentAssistantMsg.tool_calls.push({
         id: item.call_id,
         type: OPENAI_BLOCK.FUNCTION,
         function: {
-          name: item.name,
+          name: recordWireName(item.namespace ? `${item.namespace}.${item.name}` : item.name),
           arguments: typeof toolInput === "string" ? toolInput : JSON.stringify(toolInput ?? {})
         }
       });
@@ -184,22 +200,56 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   ];
   if (responseTools.length > 0) {
     result.tools = responseTools
-      .map(tool => {
+      .flatMap(tool => {
         // Already in Chat Completions format: { type: "function", function: { name, ... } }
-        if (tool.function) return tool;
+        if (tool.function) {
+          // Some providers reject dotted tool names; sanitize and keep the map so the
+          // response side restores the original name.
+          const fn = tool.function;
+          if (fn?.name && fn.name.includes(".")) {
+            return { ...tool, function: { ...fn, name: recordWireName(fn.name) } };
+          }
+          return tool;
+        }
+        // Responses API namespace tool (e.g. codex `collaboration`): a group of sub-tools.
+        // Chat Completions has no namespace concept, so expand each sub-tool into an
+        // individual `{namespace}.{subtool}` function. The response side splits the name
+        // back into Responses `name` + `namespace`.
+        if (tool.type === "namespace" && Array.isArray(tool.tools)) {
+          const ns = tool.name || "";
+          return tool.tools
+            .filter(sub => sub && sub.name)
+            .map(sub => {
+              // Keep a flat-name -> namespace map so the response side can route a
+              // tool call that arrives by flat name (wait_agent, not collaboration.wait_agent).
+              if (ns) nsToolNames.ns[sub.name] = ns;
+              return {
+                type: OPENAI_BLOCK.FUNCTION,
+                function: {
+                  name: recordWireName(ns ? `${ns}.${sub.name}` : sub.name),
+                  description: String(sub.description || tool.description || ""),
+                  parameters: normalizeToolParameters(sub.parameters),
+                  strict: sub.strict
+                }
+              };
+            });
+        }
         // Responses API function/custom tool: { type, name, description, parameters|format }.
         // Chat Completions has no freeform custom-tool declaration, so expose custom
         // tools as functions with one raw `input` string while retaining their names
         // in translator-only metadata for the response conversion.
         const name = tool.name;
         if (!name || typeof name !== "string" || name.trim() === "") return null;
+        // Some providers reject dotted tool names; sanitize every function/custom tool
+        // name and keep the map so the response side restores the original.
+        const safeName = recordWireName(name);
         if (tool.type === "custom") {
           customToolNames.add(name);
           const formatHint = [tool.format?.syntax, tool.format?.definition].filter(Boolean).join("\n");
           return {
             type: OPENAI_BLOCK.FUNCTION,
             function: {
-              name,
+              name: safeName,
               description: [String(tool.description || ""), formatHint].filter(Boolean).join("\n\n"),
               parameters: {
                 type: "object",
@@ -220,7 +270,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         return {
           type: OPENAI_BLOCK.FUNCTION,
           function: {
-            name,
+            name: safeName,
             description: String(tool.description || ""),
             parameters: normalizeToolParameters(tool.parameters),
             strict: tool.strict
@@ -230,6 +280,9 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       .filter(Boolean);
   }
   if (customToolNames.size > 0) result._customToolNames = [...customToolNames];
+  if (Object.keys(nsToolNames.wire).length || Object.keys(nsToolNames.ns).length) {
+    result._namespaceTools = nsToolNames;
+  }
 
   // Cleanup Responses API specific fields
   // Map Responses-only max_output_tokens to Chat max_tokens (avoid leaking unknown field upstream)

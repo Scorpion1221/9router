@@ -10,6 +10,41 @@ export function fallbackToolCallId(index) {
   return index === undefined ? `call_${Date.now()}` : `call_${index}_${Date.now()}`;
 }
 
+// The namespace a bare tool name already resolves to on the Responses side.
+export const DEFAULT_TOOL_NAMESPACE = "functions";
+
+// Chat Completions has no namespace concept, and several providers (deepseek,
+// codebuddy) reject dotted tool names, so a Responses namespace sub-tool travels
+// upstream as `{namespace}__{subtool}`.
+export function toWireToolName(name) {
+  return typeof name === "string" && name.includes(".") ? name.replace(/\./g, "__") : name;
+}
+
+// Inverse of toWireToolName: recover the Responses `name` + `namespace` for a tool
+// call coming back from a Chat Completions upstream.
+//
+// `namespaceTools` is the per-request map built by the request translator and carried
+// on `_namespaceTools`. It must stay per request: the gateway serves many concurrent
+// requests, and a shared map would let one session's namespaces rewrite another's tool
+// calls, or attach a namespace to a client that never sent one.
+//
+// `namespace` is omitted (not nulled) for plain tools so the emitted item is identical
+// to the pre-namespace shape.
+export function splitToolName(name, namespaceTools = null) {
+  if (typeof name !== "string") return { name: name || "" };
+  let n = namespaceTools?.wire?.[name] || name;
+  // A bare name already resolves to the default namespace, so never spell it out.
+  if (n.startsWith(`${DEFAULT_TOOL_NAMESPACE}.`)) n = n.slice(DEFAULT_TOOL_NAMESPACE.length + 1);
+  const dot = n.indexOf(".");
+  if (dot < 0) {
+    // The model may answer with the bare sub-tool name (`wait_agent` rather than
+    // `collaboration.wait_agent`); route it back to the namespace it was declared in.
+    const ns = namespaceTools?.ns?.[n];
+    return ns && ns !== DEFAULT_TOOL_NAMESPACE ? { name: n, namespace: ns } : { name: n };
+  }
+  return { name: n.slice(dot + 1), namespace: n.slice(0, dot) };
+}
+
 // Generate deterministic tool call ID from position + tool name (cache-friendly)
 export function generateToolCallId(msgIndex = 0, tcIndex = 0, toolName = "") {
   const name = toolName ? `_${toolName.replace(/[^a-zA-Z0-9_-]/g, "")}` : "";

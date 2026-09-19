@@ -6,7 +6,7 @@ import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
 import { buildChunk } from "../concerns/chunk.js";
 import { buildUsage } from "../concerns/usage.js";
-import { fallbackToolCallId } from "../concerns/toolCall.js";
+import { fallbackToolCallId, splitToolName } from "../concerns/toolCall.js";
 import { reasoningDelta, extractReasoningText } from "../concerns/reasoning.js";
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM, OPENAI_FINISH, MODEL_FALLBACK } from "../schema/index.js";
 
@@ -295,7 +295,7 @@ function emitToolCall(state, emit, tc) {
         type: custom ? RESPONSES_ITEM.CUSTOM_TOOL_CALL : RESPONSES_ITEM.FUNCTION_CALL,
         ...(custom ? { input: "" } : { arguments: "" }),
         call_id: callId,
-        name: state.funcNames[tcIdx] || ""
+        ...splitToolName(state.funcNames[tcIdx] || "", state.namespaceTools)
       }
     });
   }
@@ -356,7 +356,7 @@ function closeToolCall(state, emit, idx) {
         type: custom ? RESPONSES_ITEM.CUSTOM_TOOL_CALL : RESPONSES_ITEM.FUNCTION_CALL,
         ...(custom ? { input: extractCustomToolInput(args) } : { arguments: args }),
         call_id: callId,
-        name: state.funcNames[idx] || ""
+        ...splitToolName(state.funcNames[idx] || "", state.namespaceTools)
       }
     });
 

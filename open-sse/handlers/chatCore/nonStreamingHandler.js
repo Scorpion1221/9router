@@ -2,6 +2,7 @@ import { FORMATS } from "../../translator/formats.js";
 import { needsTranslation } from "../../translator/index.js";
 import { fromOpenAIFinish } from "../../translator/concerns/finishReason.js";
 import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.js";
+import { splitToolName } from "../../translator/concerns/toolCall.js";
 import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTracking.js";
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
@@ -78,7 +79,7 @@ function extractCustomToolInput(argumentsValue) {
   return argumentsText;
 }
 
-function openAICompletionToResponses(responseBody, customToolNames = null) {
+function openAICompletionToResponses(responseBody, customToolNames = null, namespaceTools = null) {
   const choice = responseBody?.choices?.[0];
   if (!choice) return responseBody;
 
@@ -112,7 +113,7 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
       type: custom ? RESPONSES_ITEM.CUSTOM_TOOL_CALL : RESPONSES_ITEM.FUNCTION_CALL,
       id: `${custom ? "ctc" : "fc"}_${tc.id || ""}`,
       call_id: tc.id || "",
-      name: fn.name || "",
+      ...splitToolName(fn.name || "", namespaceTools),
       ...(custom
         ? { input: extractCustomToolInput(fn.arguments) }
         : { arguments: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments || {}) }),
@@ -142,12 +143,12 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
 /**
  * Translate non-streaming response body from provider format → OpenAI format.
  */
-export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames = null) {
+export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames = null, namespaceTools = null) {
   if (targetFormat === sourceFormat) return responseBody;
   // Provider responded in OpenAI Chat Completions shape but the client speaks
   // Responses API — convert so tool_calls/text surface as Responses `output`.
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES) {
-    return openAICompletionToResponses(responseBody, customToolNames);
+    return openAICompletionToResponses(responseBody, customToolNames, namespaceTools);
   }
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.CLAUDE) {
     return openAICompletionToClaudeMessage(responseBody);
@@ -282,7 +283,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, trackDone, appendLog, pxpipe, reqTag, log }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, namespaceTools, trackDone, appendLog, pxpipe, reqTag, log }) {
   trackDone();
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
@@ -328,7 +329,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: Date.now() - requestStartTime } }));
 
   const translatedResponse = needsTranslation(targetFormat, sourceFormat)
-    ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames)
+    ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames, namespaceTools)
     : responseBody;
   const isClaudeMessageResponse = sourceFormat === FORMATS.CLAUDE && translatedResponse?.type === "message";
   // Responses-format translation produces a `object:"response"` body with no
