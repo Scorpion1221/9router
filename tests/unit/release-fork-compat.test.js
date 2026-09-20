@@ -6,8 +6,18 @@ import { __test__ as qoder } from "../../open-sse/executors/qoder.js";
 import { CodexExecutor } from "../../open-sse/executors/codex.js";
 import { PROVIDERS } from "../../open-sse/providers/index.js";
 import vertex from "../../open-sse/providers/registry/vertex.js";
+import { applyThinking } from "../../open-sse/translator/concerns/thinkingUnified.js";
 
 describe("release merge fork compatibility", () => {
+  it("keeps client thinking display with request-scoped native format metadata", () => {
+    const body = { thinking: { type: "adaptive", display: "summarized" }, output_config: { effort: "high" } };
+    const metadata = { capabilities: { reasoning: true, thinkingFormat: "claude-adaptive" } };
+    applyThinking("openai", "account-native-model", body, "codex", undefined, metadata);
+    expect(body.thinking).toEqual({ type: "adaptive", display: "summarized" });
+    expect(body.output_config).toEqual({ effort: "high" });
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
   it("keeps every Responses instruction position while accepting upstream text-block normalization", () => {
     const out = openaiToOpenAIResponsesRequest("gpt-5.5", {
       messages: [

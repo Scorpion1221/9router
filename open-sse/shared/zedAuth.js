@@ -30,6 +30,9 @@ export const ZED_HEADERS = {
 const PRIVATE_KEY_PREFIX = "zed-rsa-pkcs1:";
 const LLM_TOKEN_TTL_MS = 50 * 60 * 1000;
 const MODEL_CACHE_TTL_MS = 60 * 60 * 1000;
+// Zed's rpc::auth::random_token encodes 48 random bytes as URL-safe base64.
+// https://github.com/zed-industries/zed/blob/0eda7703f6c88aa08a25c1d2105ff1ca46f775d4/crates/rpc/src/auth.rs
+const NATIVE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{64}$/;
 
 const llmTokenCache = new Map();
 const modelCache = new Map();
@@ -112,7 +115,14 @@ export function parseZedCallbackPayload(input) {
       url = new URL(raw);
     } catch {
       try {
-        url = new URL(`http://127.0.0.1/?${raw.replace(/^\?/, "")}`);
+        // Accept pathname+query (what the local proxy forwards, e.g.
+        // "/?user_id=..&access_token=.." or "/callback?.."), a bare query,
+        // or a lone query string. Only the query part is parsed — a leading
+        // path must never become part of the first parameter name.
+        const query = raw.includes("?")
+          ? raw.slice(raw.indexOf("?") + 1)
+          : raw.replace(/^\?/, "");
+        url = new URL(`http://127.0.0.1/?${query}`);
       } catch {
         throw new Error("Invalid Zed callback URL");
       }
@@ -135,24 +145,27 @@ export function decryptZedAccessToken(encryptedAccessToken, privateKeyVerifier) 
   const privateKey = decodeZedPrivateKeyVerifier(privateKeyVerifier);
   const encrypted = Buffer.from(String(encryptedAccessToken), "base64url");
   try {
-    return crypto
-      .privateDecrypt(
+    let bytes;
+    try {
+      bytes = crypto.privateDecrypt(
         { key: privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
         encrypted,
-      )
-      .toString("utf8");
-  } catch (oaepError) {
-    try {
-      return crypto
-        .privateDecrypt(
-          { key: privateKey, padding: crypto.constants.RSA_PKCS1_PADDING },
-          encrypted,
-        )
-        .toString("utf8");
+      );
     } catch {
-      const message = oaepError instanceof Error ? oaepError.message : String(oaepError);
-      throw new Error(`Failed to decrypt Zed access token: ${message}`);
+      // Zed still supports the legacy format. OpenSSL's implicit rejection can
+      // return synthetic plaintext here, so a non-throwing decrypt is not proof
+      // of a valid token. Check the protocol shape, then verify it with Zed
+      // during postExchange before storing credentials.
+      bytes = crypto.privateDecrypt(
+        { key: privateKey, padding: crypto.constants.RSA_PKCS1_PADDING },
+        encrypted,
+      );
     }
+    const token = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (token.length !== 64 || !NATIVE_TOKEN_PATTERN.test(token)) throw new Error("Invalid native token");
+    return token;
+  } catch {
+    throw new Error("Failed to decrypt Zed access token");
   }
 }
 
@@ -280,6 +293,7 @@ export async function fetchZedLlmToken(credentials, options = {}) {
       body: JSON.stringify({ organization_id: organizationId }),
       signal: options.signal ?? undefined,
     },
+    options.proxyOptions ?? null,
   );
   const token =
     typeof data?.token === "string" ? data.token : data?.token?.[0] || data?.token?.value;
