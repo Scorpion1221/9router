@@ -56,14 +56,14 @@ function convertSystemToDeveloperRole(body) {
   }
 }
 
-// Strip server-generated item IDs (rs_/fc_/resp_/msg_) from input — avoids 404 with store=false
+// Strip replayed item IDs regardless of prefix; foreign IDs can fail Codex validation.
 function stripStoredItemReferences(body) {
   if (!Array.isArray(body.input)) return;
   body.input = body.input.filter((item) => {
     if (typeof item === "string" && SERVER_ID_PATTERN.test(item)) return false;
     if (item && typeof item === "object" && !Array.isArray(item)) {
       if (item.type === "item_reference") return false;
-      if (typeof item.id === "string" && SERVER_ID_PATTERN.test(item.id)) delete item.id;
+      if (typeof item.id === "string") delete item.id;
     }
     return true;
   });
@@ -416,7 +416,7 @@ export class CodexExecutor extends BaseExecutor {
 
     // Keep system prompts in body.input as role=developer so they stay in the cacheable prefix
     convertSystemToDeveloperRole(body);
-    // Strip server-generated item IDs (rs_/fc_/resp_/msg_) — Codex /responses can't resolve when store=false
+    // Strip replayed item IDs and stored references — Codex requires store=false.
     stripStoredItemReferences(body);
     // Flatten function tools + drop unsupported types
     normalizeCodexTools(body);
