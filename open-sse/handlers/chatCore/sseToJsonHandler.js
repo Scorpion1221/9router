@@ -202,7 +202,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   const isCodexResponsesApi = isResponsesProvider(provider) || targetFormat === FORMATS.OPENAI_RESPONSES;
   if (isCodexResponsesApi) {
     try {
-      const tierAudit = createCodexTierAudit({ provider, model, body, finalBody, status: providerResponse.status, reqTag, log });
+      const tierAudit = createCodexTierAudit({ provider, model, body, clientRawRequest, finalBody, status: providerResponse.status, reqTag, log });
       const jsonResponse = await convertResponsesStreamToJson(providerResponse.body, tierAudit);
       if (onRequestSuccess) await onRequestSuccess();
 

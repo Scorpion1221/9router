@@ -19,7 +19,8 @@ function audit(log) {
   return createCodexTierAudit({
     provider: "codex",
     model: "gpt-6-sol",
-    body: { model: "gpt-6-sol-combos", service_tier: "priority", input: "secret prompt" },
+    body: { model: "codex/gpt-6-sol", service_tier: "priority", input: "secret prompt" },
+    clientRawRequest: { body: { model: "gpt-6-sol-combos", service_tier: "priority", input: "secret prompt" } },
     finalBody: { service_tier: "priority", input: "secret prompt", token: "secret key" },
     status: 200,
     reqTag: "🟢",

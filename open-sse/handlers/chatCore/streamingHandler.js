@@ -81,7 +81,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     };
   }
 
-  const tierAudit = createCodexTierAudit({ provider, model, body, finalBody, status: providerResponse.status, reqTag, log });
+  const tierAudit = createCodexTierAudit({ provider, model, body, clientRawRequest, finalBody, status: providerResponse.status, reqTag, log });
   const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, customToolNames, namespaceTools, model, connectionId, body, onStreamComplete, apiKey, credentials, tierAudit });
 
   // Terminal bytes when the stream aborts after HTTP 200 was already sent, so the
