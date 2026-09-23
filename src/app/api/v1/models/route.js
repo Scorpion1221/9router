@@ -20,6 +20,15 @@ import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
+import { createHash } from "node:crypto";
+
+const COMPATIBLE_MODELS_TTL_MS = 5 * 60 * 1000;
+const COMPATIBLE_MODELS_RETRY_MS = 30 * 1000;
+const COMPATIBLE_MODELS_CONCURRENCY = 3;
+const compatibleModelsCache = new Map();
+const compatibleModelsInflight = new Map();
+const compatibleModelsWaiters = [];
+let activeCompatibleModelsFetches = 0;
 
 // Qoder shares one live resolver across intl (qoder) and CN (qoder-cn); the
 // credentials carry the provider id so qoderModels picks the right region's
@@ -184,13 +193,13 @@ function inferKindFromUnknownModelId(modelId) {
 }
 
 async function fetchCompatibleModelIds(connection) {
-  if (!connection?.apiKey) return [];
+  if (!connection?.apiKey) return null;
 
   const baseUrl = typeof connection?.providerSpecificData?.baseUrl === "string"
     ? connection.providerSpecificData.baseUrl.trim().replace(/\/$/, "")
     : "";
 
-  if (!baseUrl) return [];
+  if (!baseUrl) return null;
 
   let url = `${baseUrl}/models`;
   const headers = {
@@ -209,21 +218,18 @@ async function fetchCompatibleModelIds(connection) {
     headers["anthropic-version"] = "2023-06-01";
     headers.Authorization = `Bearer ${connection.apiKey}`;
   } else {
-    return [];
+    return null;
   }
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
     const response = await fetch(url, {
       method: "GET",
       headers: { ...headers, [INTERNAL_MODELS_FETCH_HEADER]: "1" },
       cache: "no-store",
-      signal: controller.signal,
+      signal: AbortSignal.timeout(5000),
     });
-    clearTimeout(timeoutId);
 
-    if (!response.ok) return [];
+    if (!response.ok) return null;
 
     const data = await response.json();
     const rawModels = parseOpenAIStyleModels(data);
@@ -236,8 +242,57 @@ async function fetchCompatibleModelIds(connection) {
       )
     );
   } catch {
-    return [];
+    return null;
   }
+}
+
+function refreshCompatibleModelIds(key, connection, cached) {
+  const request = (async () => {
+    if (activeCompatibleModelsFetches < COMPATIBLE_MODELS_CONCURRENCY) {
+      activeCompatibleModelsFetches++;
+    } else {
+      await new Promise((resolve) => compatibleModelsWaiters.push(resolve));
+    }
+    try {
+      const fetched = await fetchCompatibleModelIds(connection);
+      const models = fetched === null ? (cached?.models || []) : fetched;
+      compatibleModelsCache.set(key, {
+        models,
+        expiresAt: Date.now() + (fetched === null ? COMPATIBLE_MODELS_RETRY_MS : COMPATIBLE_MODELS_TTL_MS),
+      });
+      return models;
+    } finally {
+      const next = compatibleModelsWaiters.shift();
+      if (next) next();
+      else activeCompatibleModelsFetches--;
+    }
+  })();
+  compatibleModelsInflight.set(key, request);
+  request.then(
+    () => compatibleModelsInflight.delete(key),
+    () => compatibleModelsInflight.delete(key),
+  );
+  return request;
+}
+
+function getCompatibleModelIds(connection) {
+  // Credentials and base URL invalidate the cache without storing raw secrets
+  // in its index or logs.
+  const key = createHash("sha256").update(JSON.stringify([
+    connection.id, connection.provider, connection.apiKey,
+    connection.providerSpecificData?.baseUrl,
+  ])).digest("hex");
+  const cached = compatibleModelsCache.get(key);
+  const inflight = compatibleModelsInflight.get(key);
+  if (cached) {
+    // Serve the last successful list immediately while refreshing in the
+    // background; an expired TTL must not stall /v1/models every five minutes.
+    if (cached.expiresAt <= Date.now() && !inflight) {
+      refreshCompatibleModelIds(key, connection, cached);
+    }
+    return cached.models;
+  }
+  return inflight || refreshCompatibleModelIds(key, connection, null);
 }
 
 // Provider matches kindFilter when its serviceKinds intersect the requested kinds.
@@ -309,6 +364,22 @@ export async function buildModelsList(kindFilter, options = {}) {
       activeConnectionByProvider.set(conn.provider, conn);
     }
   }
+
+  // These compatible providers have no static catalog. Fetch their remote
+  // /models lists with bounded parallelism instead of adding each latency in
+  // series to every client request.
+  const dynamicConnections = skipDynamicFetch ? [] : [...activeConnectionByProvider].filter(([providerId, conn]) => {
+    if (!providerMatchesKinds(providerId, kindFilter)) return false;
+    if (!isOpenAICompatibleProvider(providerId) && !isAnthropicCompatibleProvider(providerId)) return false;
+    const enabledModels = conn?.providerSpecificData?.enabledModels;
+    if (Array.isArray(enabledModels) && enabledModels.length > 0) return false;
+    const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
+    return !(PROVIDER_MODELS[alias]?.length);
+  });
+  const dynamicModelIds = new Map();
+  await Promise.all(dynamicConnections.map(async ([providerId, conn]) => {
+    dynamicModelIds.set(providerId, await getCompatibleModelIds(conn));
+  }));
 
   const models = [];
 
@@ -403,7 +474,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         : providerModels.map((model) => model.id);
 
       if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
-        rawModelIds = await fetchCompatibleModelIds(conn);
+        rawModelIds = dynamicModelIds.get(providerId) || [];
       }
 
       // Config-driven live catalog override (e.g. Kiro returns dynamic
