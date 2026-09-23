@@ -7,7 +7,7 @@
 /**
  * Process a single SSE message and update state accordingly.
  */
-function processSSEMessage(msg, state) {
+function processSSEMessage(msg, state, tierAudit) {
   if (!msg.trim()) return;
 
   const eventMatch = msg.match(/^event:\s*(.+)$/m);
@@ -21,6 +21,7 @@ function processSSEMessage(msg, state) {
   let parsed;
   try { parsed = JSON.parse(dataStr); }
   catch { return; }
+  tierAudit?.observe(parsed);
 
   if (eventType === "response.created") {
     state.responseId = parsed.response?.id || state.responseId;
@@ -46,7 +47,7 @@ const EMPTY_RESPONSE = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
  * @param {ReadableStream} stream - SSE stream from provider
  * @returns {Promise<Object>} Final JSON response in Responses API format
  */
-export async function convertResponsesStreamToJson(stream) {
+export async function convertResponsesStreamToJson(stream, tierAudit = null) {
   if (!stream || typeof stream.getReader !== "function") {
     return { id: `resp_${Date.now()}`, object: "response", created_at: Math.floor(Date.now() / 1000), status: "failed", output: [], usage: { ...EMPTY_RESPONSE } };
   }
@@ -73,16 +74,17 @@ export async function convertResponsesStreamToJson(stream) {
       buffer = messages.pop() || "";
 
       for (const msg of messages) {
-        processSSEMessage(msg, state);
+        processSSEMessage(msg, state, tierAudit);
       }
     }
 
     // Flush remaining buffer (last event may not end with \n\n)
     if (buffer.trim()) {
-      processSSEMessage(buffer, state);
+      processSSEMessage(buffer, state, tierAudit);
     }
   } finally {
     reader.releaseLock();
+    tierAudit?.finish();
   }
 
   // Build output array from accumulated items (ordered by index)

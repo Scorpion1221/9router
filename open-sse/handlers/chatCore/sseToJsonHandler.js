@@ -7,6 +7,7 @@ import { PROVIDERS } from "../../config/providers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats, formatDoneLine } from "./requestDetail.js";
 import { ROLE, RESPONSES_ITEM } from "../../translator/schema/index.js";
 import { splitToolName } from "../../translator/concerns/toolCall.js";
+import { createCodexTierAudit } from "../../utils/codexTierAudit.js";
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
 const isResponsesProvider = (p) => PROVIDERS[p]?.format === FORMATS.OPENAI_RESPONSES;
@@ -201,7 +202,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   const isCodexResponsesApi = isResponsesProvider(provider) || targetFormat === FORMATS.OPENAI_RESPONSES;
   if (isCodexResponsesApi) {
     try {
-      const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
+      const tierAudit = createCodexTierAudit({ provider, model, body, finalBody, status: providerResponse.status, reqTag, log });
+      const jsonResponse = await convertResponsesStreamToJson(providerResponse.body, tierAudit);
       if (onRequestSuccess) await onRequestSuccess();
 
       const usage = jsonResponse.usage || {};

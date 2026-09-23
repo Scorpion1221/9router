@@ -51,7 +51,8 @@ export function createSSEStream(options = {}) {
     body = null,
     onStreamComplete = null,
     apiKey = null,
-    credentials = null
+    credentials = null,
+    tierAudit = null
   } = options;
 
   let buffer = "";
@@ -111,6 +112,7 @@ export function createSSEStream(options = {}) {
         thinking: accumulatedThinking
       }, finalUsage, ttftAt);
     }
+    tierAudit?.finish();
   };
 
   return new TransformStream({
@@ -150,6 +152,7 @@ export function createSSEStream(options = {}) {
           if (trimmed.startsWith("data:") && !passthroughDone) {
             try {
               const parsed = JSON.parse(trimmed.slice(5).trim());
+              tierAudit?.observe(parsed);
 
               const idFixed = fixInvalidId(parsed);
 
@@ -255,6 +258,7 @@ export function createSSEStream(options = {}) {
 
         const parsed = parseSSELine(trimmed, targetFormat);
         if (!parsed) continue;
+        tierAudit?.observe(parsed);
 
         // Responses API same-format passthrough: preserve event framing + track terminal state
         const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
@@ -396,6 +400,9 @@ export function createSSEStream(options = {}) {
         if (mode === STREAM_MODE.PASSTHROUGH) {
           const bufferedDone = buffer.trim().startsWith("data:") && buffer.trim().slice(5).trim() === "[DONE]";
           if (buffer && (!bufferedDone || !streamDoneSent)) {
+            if (!bufferedDone && buffer.trim().startsWith("data:")) {
+              try { tierAudit?.observe(JSON.parse(buffer.trim().slice(5).trim())); } catch { /* incomplete tail */ }
+            }
             let output = bufferedDone ? SSE_DONE : buffer;
             if (!bufferedDone && buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
               output = "data: " + buffer.slice(5);
@@ -426,6 +433,7 @@ export function createSSEStream(options = {}) {
           // accepts "data: " lines, so an NDJSON provider (Ollama) lost whatever
           // arrived without its closing newline.
           const parsed = parseSSELine(buffer.trim(), targetFormat);
+          if (parsed) tierAudit?.observe(parsed);
           // parseSSELine turns the SSE sentinel "data: [DONE]" into { done: true },
           // which must not be translated. An Ollama chunk also carries done:true,
           // but it is the real final chunk — it holds finish_reason and the token
@@ -509,7 +517,7 @@ export function createSSEStream(options = {}) {
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null, namespaceTools = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null, namespaceTools = null, tierAudit = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -524,11 +532,12 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     body,
     onStreamComplete,
     apiKey,
-    credentials
+    credentials,
+    tierAudit
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, tierAudit = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -537,6 +546,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    tierAudit
   });
 }
