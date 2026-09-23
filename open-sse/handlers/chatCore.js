@@ -253,6 +253,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     ];
     if (toolN) parts.push(`${toolN} TOOL`);
     if (think) parts.push(`THINK:${think}`);
+    if (provider === "codex" && ["fast", "priority"].includes(clientRawRequest?.body?.service_tier ?? body.service_tier)) parts.push("FAST:REQUESTED");
     parts.push(`ACC:${acc}`);
     log.line(reqTag, "▶", parts.join(" · "));
   }
