@@ -29,6 +29,6 @@ describe("Codex context window metadata", () => {
   });
 
   it("does not reduce the official OpenAI API model context window", () => {
-    expect(getCapabilitiesForModel("openai", "gpt-5.5").contextWindow).toBe(400000);
+    expect(getCapabilitiesForModel("openai", "gpt-5.5").contextWindow).toBe(1050000);
   });
 });
