@@ -14,6 +14,7 @@
 //        Skip the listing step and return info for one specific model.
 
 import { buildModelsList } from "../../models/route.js";
+import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
 import { resolveModelInfo, toLiteLLMEntry } from "@/lib/modelInfo";
 import { startOpenRouterSyncScheduler } from "open-sse/services/openrouterSync.js";
 
@@ -46,9 +47,13 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const singleModel = searchParams.get("model");
+    // Per-key access control: a restricted key sees only what it may call, as on /v1/models.
+    const keyAccess = await getKeyAccessContext(request);
 
     if (singleModel) {
-      const info = await resolveModelInfo(singleModel);
+      const allowed = !keyAccess
+        || (await filterModelsListForKey(keyAccess, await buildModelsList(ALL_KINDS))).some((m) => m.id === singleModel);
+      const info = allowed ? await resolveModelInfo(singleModel) : null;
       if (!info) {
         return Response.json(
           { error: { message: `Model not found: ${singleModel}`, type: "not_found" } },
@@ -73,7 +78,7 @@ export async function GET(request) {
       );
     }
 
-    const list = await buildModelsList(kindFilter);
+    const list = await filterModelsListForKey(keyAccess, await buildModelsList(kindFilter));
 
     // Resolve in parallel — each lookup is a cheap kv hit; most pages have <200 models.
     const entries = await Promise.all(

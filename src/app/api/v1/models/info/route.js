@@ -1,5 +1,9 @@
 import { resolveModelInfo } from "@/lib/modelInfo";
+import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { buildModelsList } from "../route.js";
 import { startOpenRouterSyncScheduler } from "open-sse/services/openrouterSync.js";
+
+const ALL_KINDS = ["llm", "image", "tts", "stt", "embedding", "imageToText", "webSearch", "webFetch"];
 
 // Lazy-boot the OpenRouter sync scheduler the first time any model info is
 // requested. Idempotent — subsequent calls return immediately.
@@ -33,7 +37,11 @@ export async function GET(request) {
       { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
     );
   }
-  const info = await resolveModelInfo(id, kind);
+  // Per-key access control: a restricted key gets 404 for models it may not call.
+  const keyAccess = await getKeyAccessContext(request);
+  const allowed = !keyAccess
+    || (await filterModelsListForKey(keyAccess, await buildModelsList(ALL_KINDS))).some((m) => m.id === id);
+  const info = allowed ? await resolveModelInfo(id, kind) : null;
   if (!info) {
     return Response.json(
       { error: { message: `Model not found: ${id}`, type: "not_found" } },
