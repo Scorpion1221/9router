@@ -172,6 +172,65 @@ describe("runBackgroundTokenRefreshTick", () => {
   });
 });
 
+describe("default refresh re-reads the connection before refreshing", () => {
+  const getProviderConnectionById = vi.fn();
+  const checkAndRefreshToken = vi.fn(async () => ({}));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    vi.resetModules();
+    getProviderConnectionById.mockReset();
+    checkAndRefreshToken.mockClear();
+    vi.doMock("../../src/lib/db/repos/connectionsRepo.js", () => ({ getProviderConnectionById }));
+    vi.doMock("../../src/sse/services/tokenRefresh.js", () => ({ checkAndRefreshToken }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock("../../src/lib/db/repos/connectionsRepo.js");
+    vi.doUnmock("../../src/sse/services/tokenRefresh.js");
+    vi.useRealTimers();
+    vi.resetModules();
+  });
+
+  async function tick(snapshot) {
+    const { runBackgroundTokenRefreshTick } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+    await runBackgroundTokenRefreshTick({ loadConnections: async () => [snapshot] });
+  }
+
+  it("skips when another path already refreshed it since the snapshot", async () => {
+    const snapshot = conn({ refreshToken: "rt-old" });
+    getProviderConnectionById.mockResolvedValue(
+      conn({ refreshToken: "rt-new", expiresAt: new Date(NOW + 8 * 60 * 60 * 1000).toISOString() })
+    );
+
+    await tick(snapshot);
+
+    expect(getProviderConnectionById).toHaveBeenCalledWith("c1");
+    expect(checkAndRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it("skips a connection deactivated since the snapshot", async () => {
+    getProviderConnectionById.mockResolvedValue(conn({ isActive: false }));
+
+    await tick(conn());
+
+    expect(checkAndRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it("refreshes from the current row, not the snapshot", async () => {
+    const current = conn({ refreshToken: "rt-current" });
+    getProviderConnectionById.mockResolvedValue(current);
+
+    await tick(conn({ refreshToken: "rt-snapshot" }));
+
+    expect(checkAndRefreshToken).toHaveBeenCalledTimes(1);
+    expect(checkAndRefreshToken).toHaveBeenCalledWith("grok-cli", current, { force: true });
+  });
+});
+
 describe("start/stop guards", () => {
   afterEach(async () => {
     vi.unstubAllEnvs();
@@ -199,5 +258,21 @@ describe("start/stop guards", () => {
     expect(first).toBe(true);
     expect(second).toBe(false);
     stopBackgroundTokenRefresh();
+  });
+
+  it("shares state across bundled copies of the module", async () => {
+    // Next bundles the module once for instrumentation and once for the app layer.
+    vi.stubEnv("DISABLE_BACKGROUND_TOKEN_REFRESH", "");
+    const copyA = await import("../../src/sse/services/backgroundTokenRefresh.js");
+    vi.resetModules();
+    const copyB = await import("../../src/sse/services/backgroundTokenRefresh.js");
+    expect(copyB).not.toBe(copyA);
+
+    expect(copyA.startBackgroundTokenRefresh({ intervalMs: 60_000 })).toBe(true);
+    expect(copyB.startBackgroundTokenRefresh({ intervalMs: 60_000 })).toBe(false);
+
+    copyB.stopBackgroundTokenRefresh();
+    expect(copyA.startBackgroundTokenRefresh({ intervalMs: 60_000 })).toBe(true);
+    copyA.stopBackgroundTokenRefresh();
   });
 });
