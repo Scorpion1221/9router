@@ -8,7 +8,8 @@ import { PROVIDER_OAUTH } from "../providers/index.js";
 // Single source: codex.oauth.maxRefreshAgeMs (8 days) — proactive refresh window
 export const CODEX_MAX_REFRESH_AGE_MS = PROVIDER_OAUTH["codex"]?.maxRefreshAgeMs;
 
-const refreshLocks = new Map();
+// Shared via globalThis across bundled copies of this module — see tokenRefresh/dedup.js.
+const refreshLocks = globalThis.__9rRefreshLocks ??= new Map();
 
 function parseTimeMs(value) {
   if (value === undefined || value === null || value === "") return null;

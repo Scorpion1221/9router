@@ -19,4 +19,18 @@ export async function register() {
 
   const { startModelCatalogSync } = await import("@/lib/modelCatalog/sync.js");
   startModelCatalogSync();
+
+  // initializeApp also starts this, but only once a dynamic page renders, which can
+  // be hours after boot; until then idle OAuth connections are never refreshed.
+  // Fail-open: a rejected register() would turn every request into a 500.
+  try {
+    // Token refreshes must honor the dashboard outbound-proxy setting, which is
+    // otherwise only applied when the root layout first renders.
+    const { ensureOutboundProxyInitialized } = await import("@/lib/network/initOutboundProxy");
+    await ensureOutboundProxyInitialized();
+    const { startBackgroundTokenRefresh } = await import("@/sse/services/backgroundTokenRefresh.js");
+    startBackgroundTokenRefresh();
+  } catch (e) {
+    console.error("[BG_TOKEN_REFRESH] start failed:", e?.message ?? e);
+  }
 }

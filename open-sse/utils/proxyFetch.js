@@ -2,7 +2,11 @@ import { Readable } from "stream";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
 
-const originalFetch = globalThis.fetch;
+// Next bundles this module more than once (instrumentation + route chunks). If another
+// copy already patched globalThis.fetch, wrap the fetch that patch wraps, not the patch:
+// otherwise every call runs proxyAwareFetch twice and the outer pass (proxyOptions=null)
+// overrides the per-connection proxy the inner one chose.
+const originalFetch = globalThis.fetch?.__9rOriginalFetch || globalThis.fetch;
 const proxyDispatchers = new Map();
 
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
@@ -362,6 +366,8 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 async function patchedFetch(url, options = {}) {
   return proxyAwareFetch(url, options, null);
 }
+
+patchedFetch.__9rOriginalFetch = originalFetch;
 
 // Idempotency guard — only patch once to avoid wrapping multiple times
 if (globalThis.fetch !== patchedFetch) {

@@ -15,6 +15,9 @@ describe("Codex Refresh Token", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    // The refresh dedup/lock maps live on globalThis, so resetModules doesn't clear them.
+    globalThis.__9rRefreshDedupCache?.clear();
+    globalThis.__9rRefreshLocks?.clear();
     global.fetch = originalFetch;
   });
 

@@ -11,10 +11,16 @@ const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 10 * 1000;
 const SENSITIVE_PROVIDERS = new Set(["antigravity", "gemini-cli"]);
 
-let started = false;
-let intervalHandle = null;
-let initialTimeoutHandle = null;
-let tickRunning = false;
+// Next bundles this module separately into instrumentation and into the app's server
+// chunks, and each copy has its own module scope. The state lives on global so a
+// second start from another copy is a no-op instead of a second interval refreshing
+// the same single-use refresh tokens.
+const state = global.__bgTokenRefreshState ??= {
+  started: false,
+  intervalHandle: null,
+  initialTimeoutHandle: null,
+  tickRunning: false,
+};
 
 function isTruthyEnv(value) {
   if (value == null || value === "") return false;
@@ -79,8 +85,15 @@ async function loadActiveConnections() {
 }
 
 async function refreshOne(connection) {
+  // The tick's snapshot can be a minute old by the time this account comes up (accounts
+  // are refreshed one by one with delays). If a request already rotated the refresh
+  // token meanwhile, force-refreshing the snapshot would spend the old single-use token
+  // again and get the session revoked, so work from the current row.
+  const { getProviderConnectionById } = await import("../../lib/db/repos/connectionsRepo.js");
+  const fresh = await getProviderConnectionById(connection.id);
+  if (!fresh?.isActive || selectConnectionsNeedingRefresh([fresh]).length === 0) return null;
   const { checkAndRefreshToken } = await import("./tokenRefresh.js");
-  return checkAndRefreshToken(connection.provider, connection, { force: true });
+  return checkAndRefreshToken(fresh.provider, fresh, { force: true });
 }
 
 /**
@@ -88,8 +101,8 @@ async function refreshOne(connection) {
  * @param {{ loadConnections?: Function, refreshConnection?: Function }} [deps]
  */
 export async function runBackgroundTokenRefreshTick(deps = {}) {
-  if (tickRunning) return;
-  tickRunning = true;
+  if (state.tickRunning) return;
+  state.tickRunning = true;
   try {
     const load = deps.loadConnections || loadActiveConnections;
     const refresh = deps.refreshConnection || refreshOne;
@@ -134,7 +147,7 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
       error: err?.message ?? String(err),
     });
   } finally {
-    tickRunning = false;
+    state.tickRunning = false;
   }
 }
 
@@ -144,11 +157,11 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
  * @returns {boolean} true if started this call
  */
 export function startBackgroundTokenRefresh({ intervalMs } = {}) {
-  if (started) return false;
+  if (state.started) return false;
   if (isTruthyEnv(process.env.DISABLE_BACKGROUND_TOKEN_REFRESH)) return false;
   if (isNonServerRuntime()) return false;
 
-  started = true;
+  state.started = true;
   const period = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : DEFAULT_INTERVAL_MS;
 
   const safeTick = () => {
@@ -160,25 +173,26 @@ export function startBackgroundTokenRefresh({ intervalMs } = {}) {
   };
 
   // First pass soon after boot so idle connections don't wait a full interval.
-  initialTimeoutHandle = setTimeout(safeTick, INITIAL_DELAY_MS);
-  if (initialTimeoutHandle.unref) initialTimeoutHandle.unref();
+  state.initialTimeoutHandle = setTimeout(safeTick, INITIAL_DELAY_MS);
+  if (state.initialTimeoutHandle.unref) state.initialTimeoutHandle.unref();
 
-  intervalHandle = setInterval(safeTick, period);
-  if (intervalHandle.unref) intervalHandle.unref();
+  state.intervalHandle = setInterval(safeTick, period);
+  if (state.intervalHandle.unref) state.intervalHandle.unref();
 
+  log.info("BG_TOKEN_REFRESH", "Scheduler started", { intervalMs: period });
   return true;
 }
 
 export function stopBackgroundTokenRefresh() {
-  if (initialTimeoutHandle) {
-    clearTimeout(initialTimeoutHandle);
-    initialTimeoutHandle = null;
+  if (state.initialTimeoutHandle) {
+    clearTimeout(state.initialTimeoutHandle);
+    state.initialTimeoutHandle = null;
   }
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
+  if (state.intervalHandle) {
+    clearInterval(state.intervalHandle);
+    state.intervalHandle = null;
   }
-  if (started) {
-    started = false;
+  if (state.started) {
+    state.started = false;
   }
 }

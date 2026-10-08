@@ -113,8 +113,8 @@ async function runHeavyStartup() {
       .catch((e) => console.log("[AutoPing] scheduler start failed:", e.message));
   }
 
-  // Proactive OAuth token refresh (e.g. grok-cli ~6h TTL). Module is idempotent
-  // and also started from custom-server.js when that entry is used.
+  // Proactive OAuth token refresh (e.g. grok-cli ~6h TTL). Normally already started
+  // at boot by instrumentation.js; the start is idempotent across bundle copies.
   import("@/sse/services/backgroundTokenRefresh.js")
     .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
     .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));

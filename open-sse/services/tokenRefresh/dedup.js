@@ -1,5 +1,8 @@
 const REFRESH_RESULT_TTL_MS = 10_000;
-const refreshDedupCache = new Map();
+// On globalThis, not module scope: Next bundles this module separately for instrumentation
+// (background refresher) and for request routes, and both must see the same in-flight
+// refresh or they spend the same single-use refresh token twice.
+const refreshDedupCache = globalThis.__9rRefreshDedupCache ??= new Map();
 
 export async function dedupRefresh(provider, oldToken, fn, log) {
   if (!oldToken) return fn();
