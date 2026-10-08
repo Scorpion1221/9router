@@ -192,9 +192,13 @@ export const PROVIDER_CAPABILITIES = {
   },
   "codex": {
     "gpt-6.1-sol":               CODEX_GPT_5_CAPS,
+    "gpt-6.1-sol-review":        CODEX_GPT_5_CAPS,
     "gpt-6-astra":               CODEX_GPT_5_CAPS,
+    "gpt-6-astra-review":        CODEX_GPT_5_CAPS,
     "gpt-6-sol":                 CODEX_GPT_5_CAPS,
+    "gpt-6-sol-review":          CODEX_GPT_5_CAPS,
     "gpt-6-luna":                CODEX_GPT_5_CAPS,
+    "gpt-6-luna-review":         CODEX_GPT_5_CAPS,
     "gpt-6-astra[1m]":           CODEX_EXTENDED_CAPS,
     "gpt-6-sol[1m]":             CODEX_EXTENDED_CAPS,
     "gpt-6-luna[1m]":            CODEX_EXTENDED_CAPS,
