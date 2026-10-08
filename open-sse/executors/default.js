@@ -5,6 +5,7 @@ import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { refreshProviderCredentials } from "../services/oauthCredentialManager.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { normalizeMaxCompletionTokens, stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
@@ -237,7 +238,11 @@ export class DefaultExecutor extends BaseExecutor {
     if (!credentials.refreshToken) return null;
 
     const refreshers = {
-      claude: () => this.refreshFromGrant(credentials, proxyOptions),
+      // Claude refresh tokens are single-use: go through the shared per-connection lock +
+      // dedup like the request path and background scheduler, or two concurrent
+      // refreshes (e.g. a 401 retry and a background tick) spend the same token and the
+      // second one gets invalid_grant. Like codex, the token call ignores proxyOptions.
+      claude: () => refreshProviderCredentials("claude", credentials, log),
       codex: () => this.refreshFromGrant(credentials, proxyOptions),
       iflow: () => this.refreshIflow(credentials.refreshToken, proxyOptions),
       gemini: () => this.refreshFromGrant(credentials, proxyOptions),

@@ -14,7 +14,6 @@ import {
   GEMINI_CONFIG,
   ANTIGRAVITY_CONFIG,
   KIRO_CONFIG,
-  CLAUDE_CONFIG,
   CLINE_CONFIG,
   KILOCODE_CONFIG,
   KIMCHI_CONFIG,
@@ -260,23 +259,9 @@ async function refreshOAuthToken(connection) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
-    if (provider === "codex" || provider === "grok-cli" || provider === "xai") {
+    // Single-use refresh tokens: share the per-connection lock with every other refresher.
+    if (provider === "codex" || provider === "grok-cli" || provider === "xai" || provider === "claude") {
       return await refreshProviderCredentials(provider, connection, console);
-    }
-
-    if (provider === "claude") {
-      const response = await fetch(CLAUDE_CONFIG.tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify({
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          client_id: CLAUDE_CONFIG.clientId,
-        }),
-      });
-      if (!response.ok) return null;
-      const data = await response.json();
-      return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
     if (provider === "kiro") {
