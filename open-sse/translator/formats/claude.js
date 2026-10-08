@@ -170,8 +170,9 @@ export function fixToolUseOrdering(messages) {
   return merged;
 }
 
-// Models that reject thinking.type "adaptive" + output_config.effort (Opus 4.5+/Sonnet 4.6+ only)
-const ADAPTIVE_THINKING_UNSUPPORTED = /haiku/i;
+// Models that reject thinking.type "adaptive" + output_config.effort: Haiku before 5.x
+// (Haiku 5.5 accepts both and only thinks at effort xhigh/max).
+const ADAPTIVE_THINKING_UNSUPPORTED = /haiku(?![-.]?5)/i;
 
 function handlesThinkingBlocks(provider) {
   return provider === "claude" || provider?.startsWith("anthropic-compatible") || provider === "deepseek";
@@ -208,8 +209,8 @@ function hasForeignServerToolUseId(block) {
 
 // Normalize a native Claude passthrough body to match Anthropic Messages API spec.
 // Newer Cowork/Claude Code clients emit beta-only shapes that OAuth endpoints reject:
-// 1. thinking.type "adaptive" → unsupported on Haiku
-// 2. output_config.effort → unsupported on Haiku
+// 1. thinking.type "adaptive" → unsupported on Haiku before 5.x
+// 2. output_config.effort → unsupported on Haiku before 5.x
 // 3. bare content-block objects (content: {block} instead of [{block}]) → wrapped first
 // 4. role "system"/"developer" messages (mid-conversation-system beta) → folded as instruction text
 // 5. server_tool_use blocks carrying a foreign (non-srvtoolu_) id → rejected outright

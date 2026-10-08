@@ -1,3 +1,8 @@
+# Unreleased (fork)
+
+## Features
+- **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
+
 # v0.5.95 (2026-10-01)
 
 ## Features
