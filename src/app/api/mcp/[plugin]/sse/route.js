@@ -1,4 +1,5 @@
 import { registerSession, unregisterSession, findPlugin } from "@/lib/mcp/stdioSseBridge";
+import { onDrain } from "@/lib/shutdown.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export async function GET(request, { params }) {
 
   const encoder = new TextEncoder();
   let sid;
+  let offDrain;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -18,9 +20,17 @@ export async function GET(request, { params }) {
       sid = registerSession(plugin, send);
       // MCP SSE handshake: tell client where to POST messages.
       send(`event: endpoint\ndata: /api/mcp/${plugin}/message?sessionId=${sid}\n\n`);
+      // Long-lived session: end it when the process starts draining so a deploy
+      // isn't held open; the MCP client reconnects to the new instance.
+      offDrain = onDrain(() => {
+        if (sid) unregisterSession(plugin, sid);
+        sid = null;
+        try { controller.close(); } catch { /* already closed */ }
+      });
     },
     cancel() {
       if (sid) unregisterSession(plugin, sid);
+      offDrain?.();
     },
   });
 

@@ -36,6 +36,9 @@ http.createServer = (...args) => {
     req.headers["x-9r-real-ip"] = ip;
     req.headers["x-9r-peer-token"] = PEER_TOKEN;
     if (viaProxy) req.headers["x-9r-via-proxy"] = "1";
+    // Draining (src/lib/shutdown.js): answer with Connection: close so a reused
+    // keep-alive socket can't keep the server open after server.close().
+    if (global.__9rShutdown?.draining) res.shouldKeepAlive = false;
     return handler(req, res);
   };
   const server = origCreate(...rest, wrapped);

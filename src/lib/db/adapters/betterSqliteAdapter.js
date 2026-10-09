@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { PRAGMA_SQL } from "../schema.js";
+import { onProcessExit } from "@/lib/shutdown.js";
 
 // Periodic checkpoint to keep WAL file small (avoid huge -wal/-shm growth)
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
@@ -32,11 +33,9 @@ export function createBetterSqliteAdapter(filePath) {
     try { db.close(); } catch {}
   }
 
-  // Ensure WAL is flushed and -wal/-shm files removed on shutdown
-  const onShutdown = () => gracefulClose();
-  process.once("beforeExit", onShutdown);
-  process.once("SIGINT", () => { onShutdown(); process.exit(0); });
-  process.once("SIGTERM", () => { onShutdown(); process.exit(0); });
+  // Ensure WAL is flushed and -wal/-shm files removed on shutdown. Runs at exit,
+  // not on SIGTERM: Next's start-server drains in-flight requests first.
+  onProcessExit(gracefulClose);
 
   return {
     driver: "better-sqlite3",

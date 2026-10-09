@@ -1,10 +1,11 @@
 import { getUsageStats, statsEmitter, getActiveRequests } from "@/lib/usageDb";
+import { onDrain } from "@/lib/shutdown.js";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const encoder = new TextEncoder();
-  const state = { closed: false, keepalive: null, send: null, sendPending: null, cachedStats: null };
+  const state = { closed: false, keepalive: null, send: null, sendPending: null, cachedStats: null, offDrain: null };
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -59,6 +60,18 @@ export async function GET() {
           clearInterval(state.keepalive);
         }
       }, 25000);
+
+      // A dashboard stream never ends on its own and would hold a deploy's drain
+      // open; end it when the process starts draining. EventSource reconnects,
+      // which lands on the new instance.
+      state.offDrain = onDrain(() => {
+        if (state.closed) return;
+        state.closed = true;
+        statsEmitter.off("update", state.send);
+        statsEmitter.off("pending", state.sendPending);
+        clearInterval(state.keepalive);
+        try { controller.close(); } catch { /* already closed */ }
+      });
     },
 
     cancel() {
@@ -66,6 +79,7 @@ export async function GET() {
       statsEmitter.off("update", state.send);
       statsEmitter.off("pending", state.sendPending);
       clearInterval(state.keepalive);
+      state.offDrain?.();
     },
   });
 

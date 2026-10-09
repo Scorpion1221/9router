@@ -10,6 +10,7 @@ import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "@/app/api/usage/[connectionId]/route.js";
 import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config";
+import { onDrain, isDraining } from "@/lib/shutdown.js";
 
 const C = QUOTA_AUTOPING_CONFIG;
 const CLAUDE_PING_URL = "https://api.anthropic.com/v1/messages?beta=true";
@@ -290,11 +291,13 @@ export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g
 }
 
 export function startQuotaAutoPing() {
-  if (g.interval) return;
+  if (g.interval || isDraining()) return;
   console.log("[AutoPing] scheduler started");
   runQuotaAutoPingTick().catch(() => {});
   g.interval = setInterval(() => { runQuotaAutoPingTick().catch(() => {}); }, C.tickIntervalMs);
   if (g.interval.unref) g.interval.unref();
+  // Pings spend OAuth quota and may refresh tokens; a draining instance stops.
+  if (!g.offDrain) g.offDrain = onDrain(stopQuotaAutoPing);
 }
 
 export function stopQuotaAutoPing() {

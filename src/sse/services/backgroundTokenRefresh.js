@@ -2,6 +2,7 @@
 // Fail-open everywhere: tick errors and per-connection failures never kill the interval.
 
 import * as log from "../utils/logger.js";
+import { onDrain, isDraining } from "../../lib/shutdown.js";
 import { getRefreshLeadMs } from "open-sse/services/tokenRefresh.js";
 import { getCredentialExpiryMs } from "open-sse/services/oauthCredentialManager.js";
 
@@ -20,6 +21,7 @@ const state = global.__bgTokenRefreshState ??= {
   intervalHandle: null,
   initialTimeoutHandle: null,
   tickRunning: false,
+  offDrain: null,
 };
 
 function isTruthyEnv(value) {
@@ -160,6 +162,7 @@ export function startBackgroundTokenRefresh({ intervalMs } = {}) {
   if (state.started) return false;
   if (isTruthyEnv(process.env.DISABLE_BACKGROUND_TOKEN_REFRESH)) return false;
   if (isNonServerRuntime()) return false;
+  if (isDraining()) return false;
 
   state.started = true;
   const period = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : DEFAULT_INTERVAL_MS;
@@ -180,6 +183,9 @@ export function startBackgroundTokenRefresh({ intervalMs } = {}) {
   if (state.intervalHandle.unref) state.intervalHandle.unref();
 
   log.info("BG_TOKEN_REFRESH", "Scheduler started", { intervalMs: period });
+  // A draining instance leaves refreshing to the one replacing it: refresh tokens
+  // are single-use, and two processes refreshing the same one revoke the session.
+  if (!state.offDrain) state.offDrain = onDrain(stopBackgroundTokenRefresh);
   return true;
 }
 

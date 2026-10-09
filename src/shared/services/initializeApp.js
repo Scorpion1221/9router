@@ -16,6 +16,7 @@ import {
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
 import { killAllBridges } from "@/lib/mcp/stdioSseBridge";
+import { onProcessExit } from "@/lib/shutdown.js";
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
 (function bootstrapMitm() {
@@ -54,15 +55,14 @@ export async function initializeApp() {
     // Register cleanup + exit-respawn callback immediately so signals and
     // unexpected cloudflared exits are handled even during the deferred window.
     if (!g.signalHandlersRegistered) {
-      const cleanup = () => {
+      // Runs once on the way out — after Next has drained in-flight requests on
+      // SIGTERM/SIGINT, or on any other exit. Exiting here on the signal instead
+      // would cut every open stream.
+      onProcessExit(() => {
         try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
         try { killAllBridges(); } catch { /* best effort */ }
         killCloudflared();
-        process.exit();
-      };
-      process.on("SIGINT", cleanup);
-      process.on("SIGTERM", cleanup);
-      process.on("exit", () => { try { removeAllDNSEntriesSync(); } catch { /* ignore */ } });
+      });
       g.signalHandlersRegistered = true;
     }
 

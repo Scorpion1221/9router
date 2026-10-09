@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import initSqlJs from "sql.js";
 import { PRAGMA_SQL } from "../schema.js";
+import { onProcessExit } from "@/lib/shutdown.js";
 
 let SQL = null;
 
@@ -108,8 +109,7 @@ export async function createSqlJsAdapter(filePath) {
   // Flush on shutdown
   const flush = () => { if (dirty) try { persist(); } catch {} };
   process.on("beforeExit", flush);
-  process.on("SIGINT", flush);
-  process.on("SIGTERM", flush);
+  onProcessExit(flush);
 
   return { driver: "sql.js", run, get, all, exec, transaction, close, raw: db };
 }
