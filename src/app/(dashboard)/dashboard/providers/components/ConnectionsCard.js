@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getStatusVariant as getConnectionStatusVariant } from "@/shared/utils/connectionStatus";
 import PropTypes from "prop-types";
 import { Card, Badge, Button, Modal, Select, Toggle, EditConnectionModal, ConfirmModal } from "@/shared/components";
+import SortableConnectionList, { saveConnectionOrder } from "../[id]/SortableConnectionList";
 
 // ── CooldownTimer ──────────────────────────────────────────────
 function CooldownTimer({ until }) {
@@ -30,7 +31,7 @@ function CooldownTimer({ until }) {
 CooldownTimer.propTypes = { until: PropTypes.string.isRequired };
 
 // ── ConnectionRow ──────────────────────────────────────────────
-function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete }) {
+function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, dragHandle = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const [isCooldown, setIsCooldown] = useState(false);
@@ -102,11 +103,12 @@ function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMov
   return (
     <div className={`group flex flex-col gap-3 p-2 rounded-lg sm:flex-row sm:items-center sm:justify-between hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors ${connection.isActive === false ? "opacity-60" : ""}`}>
       <div className="flex w-full min-w-0 flex-1 items-start gap-3 sm:items-center">
+        {dragHandle && <div className="flex shrink-0 items-center self-center">{dragHandle}</div>}
         <div className="flex flex-col">
-          <button onClick={onMoveUp} disabled={isFirst} className={`p-0.5 rounded ${isFirst ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}>
+          <button onClick={onMoveUp} disabled={isFirst} title="Move up" aria-label="Move up" className={`p-0.5 rounded ${isFirst ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}>
             <span className="material-symbols-outlined text-sm">keyboard_arrow_up</span>
           </button>
-          <button onClick={onMoveDown} disabled={isLast} className={`p-0.5 rounded ${isLast ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}>
+          <button onClick={onMoveDown} disabled={isLast} title="Move down" aria-label="Move down" className={`p-0.5 rounded ${isLast ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}>
             <span className="material-symbols-outlined text-sm">keyboard_arrow_down</span>
           </button>
         </div>
@@ -187,6 +189,7 @@ ConnectionRow.propTypes = {
   isLast: PropTypes.bool.isRequired,
   onMoveUp: PropTypes.func.isRequired,
   onMoveDown: PropTypes.func.isRequired,
+  dragHandle: PropTypes.node,
   onToggleActive: PropTypes.func.isRequired,
   onUpdateProxy: PropTypes.func,
   onEdit: PropTypes.func.isRequired,
@@ -379,16 +382,16 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
     } catch (e) { console.log("saveStrategy error:", e); }
   };
 
-  const handleSwapPriority = async (i1, i2) => {
+  // Show the new order at once, persist it in one request, reload on failure.
+  const handleReorder = async (next) => {
+    setConnections(next);
+    if (!(await saveConnectionOrder(providerId, next))) await fetch_();
+  };
+
+  const handleSwapPriority = (i1, i2) => {
     const next = [...connections];
     [next[i1], next[i2]] = [next[i2], next[i1]];
-    setConnections(next);
-    try {
-      await Promise.all([
-        fetch(`/api/providers/${next[i1].id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority: i1 }) }),
-        fetch(`/api/providers/${next[i2].id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority: i2 }) }),
-      ]);
-    } catch { await fetch_(); }
+    handleReorder(next);
   };
 
   const handleDelete = async (id) => {
@@ -471,11 +474,14 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
           </div>
         ) : (
           <>
-            <div className="flex flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03] max-h-[500px] overflow-y-auto pr-1">
-              {connections.map((conn, idx) => (
+            <SortableConnectionList
+              connections={connections}
+              onReorder={handleReorder}
+              className="flex flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03] max-h-[500px] overflow-y-auto pr-1"
+              renderRow={(conn, idx, dragHandle) => (
                 <ConnectionRow
-                  key={conn.id}
                   connection={conn}
+                  dragHandle={dragHandle}
                   proxyPools={proxyPools}
                   isOAuth={isOAuth}
                   isFirst={idx === 0}
@@ -487,8 +493,8 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                   onEdit={() => { setSelectedConnection(conn); setShowEditModal(true); }}
                   onDelete={() => handleDelete(conn.id)}
                 />
-              ))}
-            </div>
+              )}
+            />
             <div className="mt-4 flex justify-stretch sm:justify-start">
               <Button size="sm" icon="add" onClick={() => setShowAddModal(true)}>Add</Button>
             </div>

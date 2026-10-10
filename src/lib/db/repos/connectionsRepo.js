@@ -301,6 +301,28 @@ export async function reorderProviderConnections(providerId) {
   db.transaction(() => reorderInTx(db, providerId));
 }
 
+// Set the full order of a provider's connections in one transaction. `orderedIds`
+// must be exactly that provider's connection ids; anything else is rejected so a
+// stale or partial list can't silently reshuffle accounts.
+export async function setProviderConnectionOrder(providerId, orderedIds) {
+  const db = await getAdapter();
+  let result = { ok: false, error: "invalid order" };
+  db.transaction(() => {
+    const rows = db.all(`SELECT id FROM providerConnections WHERE provider = ?`, [providerId]);
+    const known = new Set(rows.map((r) => r.id));
+    const unique = new Set(orderedIds);
+    if (unique.size !== orderedIds.length || unique.size !== known.size || orderedIds.some((id) => !known.has(id))) {
+      result = { ok: false, error: "order must list every connection of this provider exactly once" };
+      return;
+    }
+    orderedIds.forEach((id, i) => {
+      db.run(`UPDATE providerConnections SET priority = ? WHERE id = ?`, [i + 1, id]);
+    });
+    result = { ok: true };
+  });
+  return result;
+}
+
 export async function cleanupProviderConnections() {
   const db = await getAdapter();
   const fieldsToCheck = [

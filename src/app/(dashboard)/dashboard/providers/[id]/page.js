@@ -19,6 +19,7 @@ import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
 import ConnectionRow from "./ConnectionRow";
+import SortableConnectionList, { saveConnectionOrder } from "./SortableConnectionList";
 import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
@@ -890,29 +891,17 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const handleSwapPriority = async (index1, index2) => {
-    // Optimistic update state
-    const newConnections = [...connections];
-    [newConnections[index1], newConnections[index2]] = [newConnections[index2], newConnections[index1]];
-    setConnections(newConnections);
+  // Show the new order at once, persist it in one request, and reload the
+  // saved order if that fails so the list never disagrees with the server.
+  const handleReorder = async (next) => {
+    setConnections(next);
+    if (!(await saveConnectionOrder(providerId, next))) await fetchConnections();
+  };
 
-    try {
-      await Promise.all([
-        fetch(`/api/providers/${newConnections[index1].id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priority: index1 }),
-        }),
-        fetch(`/api/providers/${newConnections[index2].id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priority: index2 }),
-        }),
-      ]);
-    } catch (error) {
-      console.log("Error swapping priority:", error);
-      await fetchConnections();
-    }
+  const handleSwapPriority = (index1, index2) => {
+    const next = [...connections];
+    [next[index1], next[index2]] = [next[index2], next[index1]];
+    handleReorder(next);
   };
 
   const selectedConnections = connections.filter((conn) => selectedConnectionIds.includes(conn.id));
@@ -1014,10 +1003,12 @@ export default function ProviderDetailPage() {
   const isSelected = (connectionId) => selectedConnectionIds.includes(connectionId);
 
   const connectionsList = (
-    <div className="flex min-w-0 flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03] max-h-[500px] overflow-y-auto pr-1">
-      {connections
-        .map((conn, index) => (
-          <div key={conn.id} className="flex min-w-0 items-stretch">
+    <SortableConnectionList
+      connections={connections}
+      onReorder={handleReorder}
+      className="flex min-w-0 flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03] max-h-[500px] overflow-y-auto pr-1"
+      renderRow={(conn, index, dragHandle) => (
+          <div className="flex min-w-0 items-stretch">
             <div className="flex shrink-0 items-center pl-1 sm:pl-2">
               <input
                 type="checkbox"
@@ -1035,6 +1026,7 @@ export default function ProviderDetailPage() {
                 isLast={index === connections.length - 1}
                 onMoveUp={() => handleSwapPriority(index, index - 1)}
                 onMoveDown={() => handleSwapPriority(index, index + 1)}
+                dragHandle={dragHandle}
                 onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
                 autoPing={AUTO_PING_SETTINGS_KEYS[providerId] && conn.authType === "oauth" ? {
                   on: autoPing.connections[conn.id] === true,
@@ -1068,8 +1060,8 @@ export default function ProviderDetailPage() {
               />
             </div>
           </div>
-        ))}
-    </div>
+      )}
+    />
   );
 
   const activePools = proxyPools.filter((p) => p.isActive === true);

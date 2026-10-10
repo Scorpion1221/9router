@@ -14,7 +14,7 @@ export {
   getProviderConnections, getProviderConnectionById,
   createProviderConnection, updateProviderConnection,
   deleteProviderConnection, deleteProviderConnectionsByProvider,
-  reorderProviderConnections, cleanupProviderConnections,
+  reorderProviderConnections, setProviderConnectionOrder, cleanupProviderConnections,
 } from "./repos/connectionsRepo.js";
 
 // Provider nodes
