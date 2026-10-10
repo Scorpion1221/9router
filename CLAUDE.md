@@ -82,6 +82,19 @@ State is **no longer `db.json`**. It's a SQLite layer under `src/lib/db/` with a
 ### RTK token saver (`open-sse/rtk/`)
 Pre-translate hooks that compress `tool_result` content in-place to cut tokens. **Fail-open**: any error returns null and leaves the body untouched — never throw out of them. Skips `is_error`/`status:"error"` results to preserve traces.
 
+### Graceful shutdown (`src/lib/shutdown.js`)
+On SIGTERM/SIGINT, Next's start-server stops accepting connections, waits for in-flight requests, then exits. LLM streams run for minutes, so **never `process.exit` on a signal**:
+- To stop background work or end a stream that never finishes on its own (dashboard SSE), use `onDrain(fn)`.
+- For synchronous cleanup on the way out (DB checkpoint/close, killing child processes), use `onProcessExit(fn)`.
+- Exit handlers can't `await`. Persist async work at drain time instead.
+
+## Deployment (fork production host)
+
+Production runs two-slot rolling deploys with `deploy/bwg/rollout.sh`; read `deploy/bwg/README.md` (the runbook) before deploying or touching the host.
+- Deploy: build the image, then `rollout.sh`. It starts the idle slot, health-gates it, switches nginx, and lets the old slot drain and exit by itself.
+- **Never `docker compose up/down 9router` or `docker restart 9router-*` there.** The compose service only builds the image.
+- Host-specific settings go in `deploy/bwg/rollout.env` (git-ignored; see `rollout.env.example`). This repo is public, so keep hostnames, domains and secrets out of committed files.
+
 ## Conventions & gotchas
 
 - Plain JavaScript (ESM), no TypeScript. `@/*` path alias → `src/*` (`jsconfig.json`).
