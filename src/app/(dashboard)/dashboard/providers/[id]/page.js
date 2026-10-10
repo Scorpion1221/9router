@@ -20,6 +20,8 @@ import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
 import ConnectionRow from "./ConnectionRow";
 import SortableConnectionList, { saveConnectionOrder } from "./SortableConnectionList";
+import ConnectionQuota from "./ConnectionQuota";
+import useConnectionQuotas, { supportsQuota } from "@/shared/hooks/useConnectionQuotas";
 import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
@@ -891,6 +893,8 @@ export default function ProviderDetailPage() {
     }
   };
 
+  const connectionQuotas = useConnectionQuotas(connections);
+
   // Show the new order at once, persist it in one request, and reload the
   // saved order if that fails so the list never disagrees with the server.
   const handleReorder = async (next) => {
@@ -1027,6 +1031,14 @@ export default function ProviderDetailPage() {
                 onMoveUp={() => handleSwapPriority(index, index - 1)}
                 onMoveDown={() => handleSwapPriority(index, index + 1)}
                 dragHandle={dragHandle}
+                quota={supportsQuota(conn) ? (
+                  <ConnectionQuota
+                    entry={connectionQuotas.quotas[conn.id]}
+                    loading={!!connectionQuotas.loading[conn.id]}
+                    error={connectionQuotas.errors[conn.id] || null}
+                    onRefresh={() => connectionQuotas.refresh(conn.id)}
+                  />
+                ) : null}
                 onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
                 autoPing={AUTO_PING_SETTINGS_KEYS[providerId] && conn.authType === "oauth" ? {
                   on: autoPing.connections[conn.id] === true,
