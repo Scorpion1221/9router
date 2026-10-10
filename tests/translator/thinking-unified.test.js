@@ -97,6 +97,13 @@ describe("applyThinking per provider format", () => {
     expect(out.output_config).toEqual({ effort: "high" });
     expect(out.thinking).toBeUndefined();
   });
+  it("permanently adaptive Claude keeps the client's thinking display", () => {
+    // Opus 5.5 defaults display to "omitted": dropping the thinking object
+    // would hide the summaries an Anthropic SDK client (e.g. Hermes) asked for.
+    const out = apply("claude", "claude-opus-5-5", { thinking: { type: "adaptive", display: "summarized" }, output_config: { effort: "medium" } }, "claude");
+    expect(out.thinking).toEqual({ type: "adaptive", display: "summarized" });
+    expect(out.output_config).toEqual({ effort: "medium" });
+  });
   it("claude haiku → enabled+budget", () => {
     const out = apply("claude", "claude-haiku-4.5", { reasoning_effort: "high" }, "claude");
     expect(out.thinking).toEqual({ type: "enabled", budget_tokens: 24576 });

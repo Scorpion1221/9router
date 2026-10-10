@@ -288,8 +288,10 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels, display) {
     case "claude-adaptive": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
       // Models that can disable thinking need the explicit adaptive switch.
-      // Permanently adaptive models such as Fable 5.1 accept effort directly.
-      if (canDisable) body.thinking = { type: "adaptive", ...(display ? { display } : {}) };
+      // Permanently adaptive models such as Fable 5.1 accept effort directly —
+      // unless the client asked for a display mode, which only travels on the
+      // thinking object (dropping it hides the summaries the client wanted).
+      if (canDisable || display) body.thinking = { type: "adaptive", ...(display ? { display } : {}) };
       else delete body.thinking;
       const level = toLevel(eff);
       // xhigh is model-gated (Opus/Sonnet 4.6 reject it) — clamp when not advertised.

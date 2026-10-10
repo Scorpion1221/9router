@@ -40,7 +40,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
     return createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, apiKey, customToolNames, credentials, namespaceTools, tierAudit);
   }
 
-  return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey, tierAudit);
+  return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey, tierAudit, toolNameMap);
 }
 
 /**
