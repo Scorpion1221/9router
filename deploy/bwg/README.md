@@ -153,9 +153,7 @@ Start from green live and no blue container. If blue is live, run `rollout.sh ro
 
 - `DRAIN_TIMEOUT=1500`. The longest `/v1` request seen was 1081 s; anything still
   running at 1500 s is killed.
-- Restarting `dockerd` restarts the containers and causes a short outage.
-  - Cause: Docker `live-restore` is off on the production host.
-  - Enabling it needs one dockerd restart.
+- Docker `live-restore` is on (`/etc/docker/daemon.json`; enabled 2026-10-10 with `systemctl reload docker`, no container restart). A dockerd restart or patch upgrade keeps the slots running; a major-version upgrade (`YY.MM`) may not reattach, so plan those like a deploy window.
 - Rolling back to an image with a lower `SCHEMA_VERSION` runs it on the newer DB.
   - Columns are only ever added, so the old image still works.
   - Features keyed on the new columns are off while it runs. For example, per-key access control does not apply on images older than v0.5.99.
