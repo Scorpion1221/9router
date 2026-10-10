@@ -222,6 +222,16 @@ export function createSSEStream(options = {}) {
                 if (restored !== parsed) { parsed = restored; fieldsInjected = true; }
               }
 
+              // Some Anthropic-compatible relays (New API) send a message_start
+              // without content/stop_reason; the Anthropic SDKs build their message
+              // snapshot from it and crash on the first content_block_start.
+              if (parsed.type === "message_start" && parsed.message && typeof parsed.message === "object") {
+                const m = parsed.message;
+                if (!Array.isArray(m.content)) { m.content = []; fieldsInjected = true; }
+                if (m.stop_reason === undefined) { m.stop_reason = null; fieldsInjected = true; }
+                if (m.stop_sequence === undefined) { m.stop_sequence = null; fieldsInjected = true; }
+              }
+
               if (!hasValuableContent(parsed, FORMATS.OPENAI)) {
                 continue;
               }

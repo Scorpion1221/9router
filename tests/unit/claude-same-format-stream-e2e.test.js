@@ -132,6 +132,29 @@ describe("claude → claude streaming (non-Claude-Code SDK client)", () => {
     expect(toolUseName(events)).toBe("launch_ide");
   });
 
+  it("completes a relay's bare message_start so SDK snapshots get a content array", async () => {
+    // New API (anthropic-compatible) streams message_start with only id/type/role/model/usage.
+    upstreamText = sse([
+      { type: "message_start", message: { type: "message", model: "claude-sonnet-5", usage: { input_tokens: 10, output_tokens: 0 }, role: "assistant", id: "msg_relay" } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } },
+      { type: "message_stop" },
+    ]);
+    const body = { model: "claude-sonnet-5", max_tokens: 64, stream: true, messages: [{ role: "user", content: "hi" }] };
+    const { events } = await run(SDK_HEADERS, {
+      body,
+      provider: "anthropic-compatible-relay",
+      model: "claude-sonnet-5",
+      credentials: { apiKey: "sk-relay-test", providerSpecificData: { baseUrl: "https://relay.test/v1" } },
+    });
+    expect(upstreamRequest.url).toContain("relay.test");
+    const start = events.find((e) => e.type === "message_start");
+    expect(start.message).toMatchObject({ id: "msg_relay", content: [], stop_reason: null, stop_sequence: null });
+    expect(events.find((e) => e.delta?.type === "text_delta")?.delta.text).toBe("Hi");
+  });
+
   it("does not touch Claude Code native passthrough", async () => {
     upstreamText = toolStream("terminal");
     const { events } = await run({ "user-agent": "claude-cli/2.1.0 (external, cli)" });
