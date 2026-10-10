@@ -32,9 +32,9 @@ export default function NineRemotePromoModal({ isOpen, onClose }) {
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] fade-in" onClick={onClose} />
 
-      <div className="relative w-full max-w-sm rounded-[14px] overflow-hidden shadow-[var(--shadow-elev)] fade-in flex flex-col bg-surface border border-border-subtle">
+      <div className="relative w-full max-w-sm max-h-[calc(100dvh-2rem)] rounded-[14px] overflow-hidden shadow-[var(--shadow-elev)] fade-in flex flex-col bg-surface border border-border-subtle">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle">
+        <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-3">
             <div className="w-7 h-7 rounded-[8px] flex items-center justify-center bg-primary">
               <span className="material-symbols-outlined text-white text-base">terminal</span>
@@ -49,8 +49,8 @@ export default function NineRemotePromoModal({ isOpen, onClose }) {
           </button>
         </div>
 
-        {/* Body */}
-        <div className="px-7 py-7 pb-9 flex flex-col gap-6">
+        {/* Body — scrolls on short / landscape screens so the CTA stays reachable */}
+        <div className="px-7 py-7 pb-9 flex flex-col gap-6 min-h-0 overflow-y-auto overscroll-contain">
           {/* Hero */}
           <div className="flex flex-col items-center gap-2 text-center mt-2">
             <div className="w-14 h-14 rounded-[14px] flex items-center justify-center mb-1 bg-primary shadow-[var(--shadow-warm)]">

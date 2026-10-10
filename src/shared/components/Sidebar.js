@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -368,9 +369,10 @@ export default function Sidebar({ onClose }) {
         variant="primary"
       />
 
-      {/* Disconnected / Updating Overlay */}
-      {(isDisconnected || isUpdating) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
+      {/* Disconnected / Updating Overlay — portaled: the mobile drawer's transform
+          would otherwise trap a `fixed` overlay inside the 288px sidebar. */}
+      {(isDisconnected || isUpdating) && typeof document !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-50 flex overflow-y-auto overscroll-contain bg-black/80 backdrop-blur-sm p-6">
           {isUpdating ? (
             <ManualUpdatePanel
               latestVersion={updateInfo?.latestVersion}
@@ -382,7 +384,7 @@ export default function Sidebar({ onClose }) {
               isDisconnected={isDisconnected}
             />
           ) : (
-            <div className="text-center p-8">
+            <div className="m-auto text-center p-8">
               <div className="flex items-center justify-center size-16 rounded-full bg-red-500/20 text-red-500 mx-auto mb-4">
                 <span className="material-symbols-outlined text-[32px]">power_off</span>
               </div>
@@ -393,7 +395,8 @@ export default function Sidebar({ onClose }) {
               </Button>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
@@ -406,7 +409,7 @@ Sidebar.propTypes = {
 function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdown, onCancel, countdown, isDisconnected }) {
   const isCountingDown = countdown > 0;
   return (
-    <div className="w-full max-w-lg rounded-xl bg-neutral-900/95 border border-white/10 p-6 text-white">
+    <div className="m-auto w-full max-w-lg rounded-xl bg-neutral-900/95 border border-white/10 p-6 text-white">
       <div className="flex items-center gap-3 mb-4">
         <div className="flex items-center justify-center size-11 rounded-full bg-amber-500/20 text-amber-400">
           <span className="material-symbols-outlined text-[24px]">content_copy</span>
