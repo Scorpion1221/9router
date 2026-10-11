@@ -78,6 +78,7 @@ SLOT_SUBNET=${SLOT_SUBNET:-172.31.9.0/24}
 APP_PORT=20128                            # the app's port inside every container
 DRAIN_TIMEOUT=${DRAIN_TIMEOUT:-1500}      # s the old slot may take to finish streams
 SETTLE=${SETTLE:-5}                       # s between nginx switch and SIGTERM to the old slot
+KEEP_ROLLBACK=${KEEP_ROLLBACK:-1}         # rollback-* image tags kept after a deploy (newest first)
 declare -A IP=([blue]=${BLUE_IP:-172.31.9.20} [green]=${GREEN_IP:-172.31.9.21})
 
 mkdir -p "$LOG_DIR"
@@ -276,6 +277,17 @@ drain_and_stop() {  # CONTAINER — the app exits when its streams finish
   log "  $c exited after $(( $(date +%s) - t0 ))s (exit code $(docker inspect -f '{{.State.ExitCode}}' "$c" 2>/dev/null))"
 }
 
+prune_rollback_images() {  # keep the newest KEEP_ROLLBACK rollback-<ts> tags of the image repo
+  local repo=${IMAGE%%:*} t
+  # Tags sort by timestamp. An image a container still uses can't be removed
+  # without -f, so the stopped slot kept for `rollout.sh rollback` is safe.
+  docker images "$repo" --format '{{.Tag}}' | { grep '^rollback-' || true; } | sort -r | tail -n +$((KEEP_ROLLBACK + 1)) |
+  while read -r t; do
+    if docker rmi "$repo:$t" >/dev/null 2>&1; then log "  removed old rollback image $repo:$t"
+    else log "  kept $repo:$t (a container still uses it)"; fi
+  done
+}
+
 preflight_common() {
   take_lock
   docker inspect 9router-swap >/dev/null 2>&1 && die "9router-swap exists (an unfinished swap.sh run) — finish or remove it first"
@@ -339,6 +351,7 @@ cmd_deploy() {
   drain_and_stop "$old"
   STAGE=none
   log "done: $idle live, $old stopped (kept for 'rollout.sh rollback')"
+  prune_rollback_images || log "  WARNING: rollback image cleanup failed; the deploy itself is done"
 }
 
 cmd_rollback() {

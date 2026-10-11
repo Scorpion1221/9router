@@ -52,6 +52,7 @@ What the script does:
 2. Starts the idle slot and health-gates it: `/api/health` plus a keyed `/v1/models`.
 3. Switches nginx.
 4. Waits 5 s, then `docker stop -t 1500` on the old slot. The old slot exits as soon as its last stream ends.
+5. Removes all but the newest `9router:rollback-*` tag (`KEEP_ROLLBACK`, default 1). An image a container still uses is never removed.
 
 Rules:
 - Build before the overlap. Never build while two slots are running.
