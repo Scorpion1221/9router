@@ -41,7 +41,6 @@ stopping it.
 
 ```bash
 cd /root/9router && git pull --ff-only origin develop
-docker tag 9router:local 9router:rollback-$(date -u +%Y%m%d-%H%M)
 docker compose build 9router > /tmp/9r-build.log 2>&1   # ~4 min, peak ~2.4 GB RAM
 setsid nohup deploy/bwg/rollout.sh > /dev/null 2>&1 &
 tail -f "$(ls -t /var/log/9router-rollout/rollout-*.log | head -1)"   # LOG_DIR from rollout.env
@@ -50,9 +49,9 @@ tail -f "$(ls -t /var/log/9router-rollout/rollout-*.log | head -1)"   # LOG_DIR 
 What the script does:
 1. Waits until no OAuth refresh is due for 10 min.
 2. Starts the idle slot and health-gates it: `/api/health` plus a keyed `/v1/models`.
-3. Switches nginx.
+3. Switches nginx and tags the new image `9router:rollback-<ts>`. The next build moves `9router:local`, and Docker's containerd image store deletes an image once its last tag is gone, so this tag keeps it.
 4. Waits 5 s, then `docker stop -t 1500` on the old slot. The old slot exits as soon as its last stream ends.
-5. Removes all but the newest `9router:rollback-*` tag (`KEEP_ROLLBACK`, default 1). An image a container still uses is never removed.
+5. Keeps the newest two `9router:rollback-*` tags (`KEEP_ROLLBACK`, default 2): the live image and the one before it. An image a container still uses is never removed.
 
 Rules:
 - Build before the overlap. Never build while two slots are running.

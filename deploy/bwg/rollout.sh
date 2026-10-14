@@ -78,7 +78,7 @@ SLOT_SUBNET=${SLOT_SUBNET:-172.31.9.0/24}
 APP_PORT=20128                            # the app's port inside every container
 DRAIN_TIMEOUT=${DRAIN_TIMEOUT:-1500}      # s the old slot may take to finish streams
 SETTLE=${SETTLE:-5}                       # s between nginx switch and SIGTERM to the old slot
-KEEP_ROLLBACK=${KEEP_ROLLBACK:-1}         # rollback-* image tags kept after a deploy (newest first)
+KEEP_ROLLBACK=${KEEP_ROLLBACK:-2}         # rollback-* tags kept after a deploy: the live image + the one before
 declare -A IP=([blue]=${BLUE_IP:-172.31.9.20} [green]=${GREEN_IP:-172.31.9.21})
 
 mkdir -p "$LOG_DIR"
@@ -345,6 +345,9 @@ cmd_deploy() {
   log "3/4 switch nginx -> $idle"
   switch_to "$idle" || die "nginx switch failed; $old still live"
   STAGE=switched
+  # Tag the release as it goes live: the next build moves 9router:local, and the
+  # containerd image store deletes an image as soon as its last tag is gone.
+  docker tag "$IMAGE" "${IMAGE%%:*}:rollback-$(date -u +%Y%m%d-%H%M)" || log "  WARNING: could not tag $IMAGE for rollback"
   sleep "$SETTLE"
 
   log "4/4 drain $old"
