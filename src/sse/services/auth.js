@@ -1,7 +1,9 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, updateProviderConnectionWith, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getBlockingLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
+import { MAX_QUOTA_LOCK_MS } from "open-sse/services/quotaState.js";
+import { rankResetFirst, earliestEligibleAt } from "open-sse/services/resetFirst.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
 import * as log from "../utils/logger.js";
@@ -106,7 +108,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const excluded = excludeSet.has(c.id);
       const locked = isModelLockActive(c, model);
       if (excluded || locked) {
-        const lockUntil = getEarliestModelLockUntil(c);
+        const lockUntil = getBlockingLockUntil(c, model);
         log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
       }
     });
@@ -114,7 +116,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     if (availableConnections.length === 0) {
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
       const lockedConns = connections.filter(c => isModelLockActive(c, model));
-      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      const expiries = lockedConns.map(c => getBlockingLockUntil(c, model)).filter(Boolean);
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
           const connQuotas = antigravityQuotaCache.get(c.id);
@@ -154,6 +156,33 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (connection) {
       // skip strategy
+    } else if (strategy === "reset-first") {
+      // Spend the quota that expires first; reserve accounts only when no normal one can.
+      // Reads in-memory quota snapshots only: this runs inside the selection mutex.
+      const { order, blocked } = rankResetFirst(availableConnections, model);
+      if (!order.length) {
+        // Retry when the first account frees up: a quota window refills, a release
+        // window opens, or a lock on one of the other accounts expires.
+        const lockEnds = connections.filter((c) => !excludeSet.has(c.id))
+          .map((c) => getBlockingLockUntil(c, model)).filter(Boolean).map((t) => new Date(t).getTime());
+        const candidates = [earliestEligibleAt(blocked), ...lockEnds].filter(Boolean);
+        const until = candidates.length ? Math.min(...candidates) : null;
+        const retryAfter = new Date(until || Date.now() + 5 * 60 * 1000).toISOString();
+        const reasons = blocked.map(({ conn: c, assessment: a }) => `${c.name || c.id?.slice(0, 8)}: ${a.reason}`).join("; ");
+        log.warn("AUTH", `${provider} | reset-first: no usable account for ${model || "all"} (${formatRetryAfter(retryAfter)}) | ${reasons}`);
+        // Account names (often upstream emails) and policies stay in the server log.
+        return {
+          allRateLimited: true,
+          retryAfter,
+          retryAfterHuman: formatRetryAfter(retryAfter),
+          lastError: "No account has quota left (every account is exhausted or at its keep line)",
+          lastErrorCode: 429,
+        };
+      }
+      connection = order[0].conn;
+      if (order[0].tier === "reserve") {
+        log.info("AUTH", `${provider} | reset-first: no normal account usable, using reserve ${connection.name || connection.id?.slice(0, 8)}`);
+      }
     } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
@@ -242,7 +271,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @param {string|null} model - The specific model that triggered the error
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
+export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null, quota = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
@@ -253,10 +282,18 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 
   // Provider-specific precise cooldown (e.g. codex usage_limit_reached resets_at) overrides backoff
   let shouldFallback, cooldownMs, newBackoffLevel;
+  let lockModel = githubResetAtMs ? null : model;
   if (githubResetAtMs) {
     shouldFallback = true;
     cooldownMs = githubResetAtMs - Date.now();
     newBackoffLevel = 0;
+  } else if (quota?.resetsAtMs && quota.resetsAtMs > Date.now()) {
+    // Quota window exhausted (Claude 5h/weekly, Codex usage limit): retrying before
+    // its reset only collects more 429s, however far away the reset is.
+    shouldFallback = true;
+    cooldownMs = Math.min(quota.resetsAtMs - Date.now(), MAX_QUOTA_LOCK_MS);
+    newBackoffLevel = 0;
+    if (quota.scope === "account") lockModel = null;
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
     // Antigravity quota API provides exact per-model resetAt. Do not truncate it.
@@ -270,7 +307,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 200) : "Provider error";
-  const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
+  const lockUpdate = buildModelLockUpdate(lockModel, cooldownMs);
 
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
@@ -283,7 +320,9 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 
   const lockKey = Object.keys(lockUpdate)[0];
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
-  log.warn("AUTH", `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
+  log.warn("AUTH", quota?.resetsAtMs
+    ? `${connName} locked ${lockKey} until ${new Date(Date.now() + cooldownMs).toISOString()} [${status}, quota ${quota.window}]`
+    : `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
 
   if (provider && status && reason) {
     console.error(`❌ ${provider} [${status}]: ${reason}`);
@@ -309,12 +348,15 @@ export async function clearAccountError(connectionId, currentConnection, model =
 
   if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0) return;
 
-  // Keys to clear: current model's lock + all expired locks
+  // Keys to clear: current model's lock + all expired locks. Keys already null are
+  // skipped: writing them anyway (with testStatus "active") wiped every lock on the
+  // fresh row, including one another request had just set.
   const keysToClear = allLockKeys.filter(k => {
+    const expiry = conn[k];
+    if (!expiry) return false;
     if (model && k === `modelLock_${model}`) return true; // succeeded model
     if (model && k === "modelLock___all") return true;    // account-level lock
-    const expiry = conn[k];
-    return expiry && new Date(expiry).getTime() <= now;   // expired
+    return new Date(expiry).getTime() <= now;             // expired
   });
 
   if (keysToClear.length === 0 && conn.testStatus !== "unavailable" && !conn.lastError) return;
@@ -328,18 +370,15 @@ export async function clearAccountError(connectionId, currentConnection, model =
 
   const clearObj = Object.fromEntries(keysToClear.map(k => [k, null]));
 
-  // Only reset error state if no active locks remain
-  if (remainingActiveLocks.length === 0) {
-    Object.assign(clearObj, {
-      testStatus: "active",
-      lastError: null,
-      errorCode: null,
-      lastErrorAt: null,
-      backoffLevel: 0
-    });
-  }
-
-  await updateProviderConnection(connectionId, clearObj);
+  // Only reset error state if no active locks remain. Decided again on the current
+  // row: the snapshot is from selection time, and a concurrent request may have
+  // locked the account since (testStatus "active" would wipe that lock too).
+  await updateProviderConnectionWith(connectionId, (current) => {
+    const stillLocked = Object.keys(current).some((k) => k.startsWith("modelLock_") && !(k in clearObj)
+      && current[k] && new Date(current[k]).getTime() > Date.now());
+    if (remainingActiveLocks.length || stillLocked) return clearObj;
+    return { ...clearObj, testStatus: "active", lastError: null, errorCode: null, lastErrorAt: null, backoffLevel: 0 };
+  });
 }
 
 /**

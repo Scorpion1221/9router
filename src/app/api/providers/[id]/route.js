@@ -6,6 +6,7 @@ import {
   deleteProviderConnection,
 } from "@/models";
 import { toProviderConnectionResponse, usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
+import { parsePolicyPatch } from "open-sse/services/resetFirst.js";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -110,7 +111,13 @@ export async function PUT(request, { params }) {
       return NextResponse.json({ error: proxyPoolResult.error }, { status: 400 });
     }
 
-    const updateData = {};
+    // Account-selection policy (reset-first): role, keep %, release-before hours.
+    const policy = parsePolicyPatch(body);
+    if (policy.error) {
+      return NextResponse.json({ error: policy.error }, { status: 400 });
+    }
+
+    const updateData = { ...policy.patch };
     if (name !== undefined) updateData.name = name;
     if (priority !== undefined) updateData.priority = priority;
     if (globalPriority !== undefined) updateData.globalPriority = globalPriority;

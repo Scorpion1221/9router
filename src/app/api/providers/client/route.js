@@ -9,6 +9,8 @@ const SAFE_FIELDS = [
   "testStatus", "lastError", "lastErrorAt", "errorCode",
   "expiresAt", "lastUsedAt", "consecutiveUseCount",
   "createdAt", "updatedAt",
+  // Selection policy: the Quota Tracker's edit dialog must see these or Save resets them.
+  "poolRole", "keepPct", "releaseBeforeHours",
 ];
 
 const SAFE_PSD_FIELDS = [

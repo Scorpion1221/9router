@@ -53,7 +53,19 @@ export function publicConnection(c) {
     backoffLevel: c.backoffLevel ?? null,
     expiresAt: c.expiresAt || c.tokenExpiresAt || null,
     locks: activeLocks(c),
+    poolRole: c.poolRole === "reserve" ? "reserve" : "normal",
+    keepPct: Number(c.keepPct) || 0,
+    releaseBeforeHours: Number(c.releaseBeforeHours) || 0,
   };
+}
+
+/** One account by id, name, email or masked name; 404 / 409 when not exactly one. */
+export async function resolveAccount(idOrName) {
+  const conns = await getProviderConnections({});
+  const matches = conns.filter((c) => c.id === idOrName || c.name === idOrName || c.email === idOrName || maskName(c.name) === idOrName);
+  if (matches.length === 0) throw opsError(404, `no account '${idOrName}'`);
+  if (matches.length > 1) throw opsError(409, `'${idOrName}' matches ${matches.length} accounts; use the id`);
+  return matches[0];
 }
 
 export async function listAccounts({ provider, since = "1h", withLastOk = false } = {}) {

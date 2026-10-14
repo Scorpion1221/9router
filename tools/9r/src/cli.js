@@ -132,16 +132,64 @@ COMMANDS.health = {
   },
 };
 
+const SET_FLAGS = ["role", "keep", "release-before"];
+
+function parseHours(raw) {
+  const m = /^(\d+(?:\.\d+)?)([hd]?)$/i.exec(String(raw).trim());
+  if (!m) throw new CliError(`--release-before '${raw}' is not a duration (use e.g. 12h, 1d, 0)`, { exitCode: 2 });
+  return Number(m[1]) * (m[2].toLowerCase() === "d" ? 24 : 1);
+}
+
+async function setAccountPolicy(name, flags) {
+  if (!name) throw new CliError("account name or id is required", { help: ["9r accounts set <name> --role reserve --keep 30 --release-before 12h"], exitCode: 2 });
+  const body = {};
+  if (flags.role !== undefined) {
+    if (!["normal", "reserve"].includes(flags.role)) throw new CliError(`--role must be normal or reserve, not '${flags.role}'`, { exitCode: 2 });
+    body.poolRole = flags.role;
+  }
+  if (flags.keep !== undefined) {
+    const keep = Number(String(flags.keep).replace(/%$/, ""));
+    if (!Number.isInteger(keep) || keep < 0 || keep > 100) throw new CliError("--keep must be an integer 0-100", { exitCode: 2 });
+    body.keepPct = keep;
+  }
+  if (flags["release-before"] !== undefined) body.releaseBeforeHours = parseHours(flags["release-before"]);
+  if (!Object.keys(body).length) throw new CliError("nothing to set", { help: ["9r accounts set <name> [--role normal|reserve] [--keep 0-100] [--release-before 12h]"], exitCode: 2 });
+  const res = await api(`/accounts/${encodeURIComponent(name)}`, { method: "PATCH", body });
+  const a = res.account;
+  const changed = Object.entries(res.changed || {}).map(([k, v]) => `${k} ${v.from} → ${v.to}`);
+  out({
+    account: a.name,
+    provider: a.provider,
+    role: a.poolRole,
+    keep: `${a.keepPct}%`,
+    releaseBefore: a.releaseBeforeHours ? `${a.releaseBeforeHours}h` : "off",
+    changed: changed.length ? changed.join(", ") : "no change (already set)",
+    help: [`Run \`9r quota --provider ${a.provider}\` to see the order accounts are used in`],
+  });
+  return 0;
+}
+
 COMMANDS.accounts = {
-  flags: { provider: "value", since: "value", state: "value" },
+  flags: { provider: "value", since: "value", state: "value", role: "value", keep: "value", "release-before": "value" },
   help: [
     "9r accounts [--provider claude] [--since 1h] [--state ok|locked|disabled]",
+    "9r accounts set <name> [--role normal|reserve] [--keep 0-100] [--release-before 12h|0]",
     "Upstream account pool: state, lock expiry, attempts and 429s in the window, last success.",
+    "`set` changes an account's selection policy (needs an operate token):",
+    "  --role reserve        only used when no normal account can take the request",
+    "  --keep 30             stop routing to it once any quota window has <30% left",
+    "  --release-before 12h  ignore --keep in the last 12h before its weekly reset (0 = off)",
     "examples:",
     "  9r accounts --provider claude",
     "  9r accounts --state locked",
+    "  9r accounts set baoqidev02-team --role reserve --keep 30 --release-before 12h",
   ].join("\n"),
-  async run({ flags }) {
+  async run({ flags, positionals }) {
+    const [sub, name] = positionals;
+    if (sub === "set") return setAccountPolicy(name, flags);
+    if (sub) throw new CliError(`unknown accounts subcommand '${sub}'`, { help: ["9r accounts [--provider p] | 9r accounts set <name> …"], exitCode: 2 });
+    const misplaced = SET_FLAGS.filter((f) => flags[f] !== undefined);
+    if (misplaced.length) throw new CliError(`--${misplaced[0]} only works with \`9r accounts set <name>\``, { exitCode: 2 });
     const res = await api("/accounts", { query: { provider: flags.provider, since: flags.since || "1h" } });
     let list = res.accounts;
     if (flags.state) list = list.filter((a) => a.state === flags.state);
@@ -164,18 +212,54 @@ COMMANDS.accounts = {
   },
 };
 
+const pctOf = (w) => (w ? `${w.remainingPct}%` : "-");
+
+async function providerQuota(flags) {
+  const res = await api("/quota", { query: { provider: flags.provider, model: flags.model } });
+  if (!res.accounts.length) { out({ quota: `0 ${res.provider} accounts` }); return 0; }
+  const rows = res.accounts.map((a) => ({
+    order: a.order ?? "-",
+    name: a.name,
+    role: a.role,
+    keep: `${a.keepPct}%`,
+    s5h: pctOf(a.windows["5h"]),
+    week: pctOf(a.windows["7d"]),
+    weekResets: until(a.windows["7d"]?.resetAt) ?? "-",
+    models: a.modelWindows.map((w) => { const [len, scope] = w.window.split(":"); return `${scope}/${len} ${w.remainingPct}%`; }).join(" ") || "-",
+    state: a.state === "locked" ? `locked (${until(a.lockedUntil)})`
+      : a.eligibleAt ? `${a.state} (${until(a.eligibleAt)})` : a.state,
+  }));
+  const noData = res.accounts.filter((a) => a.active && !a.windows["5h"] && !a.windows["7d"]).length;
+  const help = [];
+  if (res.strategy !== "reset-first") help.push(`Strategy is ${res.strategy}${res.strategy === "round-robin" ? " (order not shown: it rotates)" : ""}; set Reset first on the ${res.provider} provider page to order by weekly reset`);
+  if (noData) help.push(`${noData} account(s) have no quota reading yet (filled by traffic and a 15-min poll)`);
+  help.push("Run `9r accounts set <name> --role reserve --keep 30` to keep an account mostly for yourself");
+  out({ provider: res.provider, strategy: res.strategy, ...(res.model ? { model: res.model } : {}), accounts: rows, help: help.slice(0, 3) });
+  return 0;
+}
+
 COMMANDS.quota = {
-  flags: { refresh: "bool" },
+  flags: { refresh: "bool", provider: "value", model: "value" },
   help: [
     "9r quota <account name or id> [--refresh]",
-    "Remaining quota windows for one account (5h / weekly / per-model), as the dashboard shows them.",
-    "  --refresh   bypass the provider-side cache",
+    "9r quota --provider claude|codex [--model <id>]",
+    "Remaining quota windows for one account (5h / weekly / per-model), as the dashboard shows them;",
+    "or, with --provider, every account's live quota, role/keep and the order the gateway uses them in.",
+    "  --refresh   bypass the provider-side cache (one account, needs operate)",
+    "  --model     order for this model id (applies model-scoped windows and locks, e.g. claude-fable-5-1)",
     "examples:",
     "  9r quota huiqian-team",
+    "  9r quota --provider claude",
   ].join("\n"),
   async run({ flags, positionals }) {
     const id = positionals[0];
-    if (!id) throw new CliError("account name or id is required", { help: ["9r quota <name>  (list names with `9r accounts`)"], exitCode: 2 });
+    if (flags.provider) {
+      if (id) throw new CliError("give either an account name or --provider, not both", { exitCode: 2 });
+      if (flags.refresh) throw new CliError("--refresh works on one account: 9r quota <name> --refresh", { exitCode: 2 });
+      return providerQuota(flags);
+    }
+    if (flags.model) throw new CliError("--model only works with --provider", { exitCode: 2 });
+    if (!id) throw new CliError("account name or id is required", { help: ["9r quota <name>  (list names with `9r accounts`)", "9r quota --provider claude  (all accounts)"], exitCode: 2 });
     const res = await api(`/accounts/${encodeURIComponent(id)}/quota`, { query: { force: flags.refresh ? 1 : null } });
     if (!res.supported || !res.rows.length) {
       out({ account: res.account.name, provider: res.account.provider, quota: res.message || "no quota data" });
@@ -348,8 +432,8 @@ function globalHelp() {
     "commands:",
     "  9r                 live overview (status + next steps)",
     "  9r health          request success/latency (--since, --by hour|model|key|error|status)",
-    "  9r accounts        upstream account pool state (--provider, --state)",
-    "  9r quota <name>    remaining quota for one account",
+    "  9r accounts        upstream account pool state (--provider, --state); `set` changes role/keep",
+    "  9r quota <name>    remaining quota for one account (--provider claude: all + selection order)",
     "  9r errors          failed upstream attempts by provider and error class",
     "  9r usage           requests by model / key (--by key,model --model opus)",
     "  9r combos | keys   routing config (read-only)",

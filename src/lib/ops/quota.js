@@ -44,6 +44,9 @@ export async function getConnectionQuota(connectionId, { force = false } = {}) {
     }
   }
   const usage = await getUsageForProvider(conn, proxyOptions, { force });
+  // Feeds the routing quota state too (and can lift a lock the reading disproves).
+  const { applyQuotaReading } = await import("@/sse/services/quotaPoller.js");
+  await applyQuotaReading(conn, usage).catch(() => {});
   const rows = parseQuotaData(conn.provider, usage)
     .filter((q) => q?.name && q.name !== "error")
     .map((q) => ({

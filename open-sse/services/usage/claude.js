@@ -42,15 +42,22 @@ export async function getClaudeUsage(accessToken, proxyOptions = null, options =
 
   const promise = (async () => {
     const result = await fetchClaudeUsageRaw(accessToken, proxyOptions);
-    // Only cache real quota data, not soft-failure {message: ...} payloads
+    // Only cache real quota data, not soft-failure {message: ...} payloads.
+    // fetchedAt is when upstream answered: a cached copy must not pass for a new reading.
     if (accessToken && result?.quotas) {
+      result.fetchedAt = Date.now();
       usageCache.set(accessToken, {
         result,
         expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
       });
       return result;
     }
-    // Soft failure (429/error): prefer the last good read over a transient error
+    // Soft failure (429/error): prefer the last good read over a transient error,
+    // and drop the in-flight entry so the next call retries instead of reusing this one.
+    if (accessToken) {
+      if (stale) usageCache.set(accessToken, { result: stale, expiresAt: 0 });
+      else usageCache.delete(accessToken);
+    }
     if (stale) return stale;
     return result;
   })();

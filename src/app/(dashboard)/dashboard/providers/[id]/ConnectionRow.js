@@ -187,6 +187,17 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
               </span>
             )}
             <span className="text-xs text-text-muted">#{connection.priority}</span>
+            {connection.poolRole === "reserve" && (
+              <Badge variant="info" size="sm">Reserve</Badge>
+            )}
+            {Number(connection.keepPct) > 0 && (
+              <span
+                className="text-xs text-text-muted"
+                title={Number(connection.releaseBeforeHours) > 0 ? `Keep ignored in the last ${connection.releaseBeforeHours}h before the weekly reset` : undefined}
+              >
+                Keep {connection.keepPct}%{Number(connection.releaseBeforeHours) > 0 ? ` · release ${connection.releaseBeforeHours}h` : ""}
+              </span>
+            )}
             {connection.globalPriority && (
               <span className="text-xs text-text-muted">Auto: {connection.globalPriority}</span>
             )}

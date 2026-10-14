@@ -33,4 +33,10 @@ export async function register() {
   } catch (e) {
     console.error("[BG_TOKEN_REFRESH] start failed:", e?.message ?? e);
   }
+  try {
+    const { startQuotaPoller } = await import("@/sse/services/quotaPoller.js");
+    startQuotaPoller();
+  } catch (e) {
+    console.error("[QUOTA] poller start failed:", e?.message ?? e);
+  }
 }

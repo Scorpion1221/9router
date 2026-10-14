@@ -118,6 +118,9 @@ async function runHeavyStartup() {
   import("@/sse/services/backgroundTokenRefresh.js")
     .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
     .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));
+  import("@/sse/services/quotaPoller.js")
+    .then(({ startQuotaPoller }) => startQuotaPoller())
+    .catch((e) => console.log("[QuotaPoller] start failed:", e.message));
 }
 
 function hasQuotaAutoPingEnabled(settings) {

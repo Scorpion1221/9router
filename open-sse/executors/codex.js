@@ -383,7 +383,8 @@ export class CodexExecutor extends BaseExecutor {
     return { matched: null, message: null, accountFallback: false, replacementBody };
   }
 
-  // Parse Codex usage_limit_reached to extract precise resetsAtMs; fallback to default otherwise
+  // Parse Codex usage_limit_reached to extract precise resetsAtMs; fallback to default otherwise.
+  // It is a quota rejection: the whole account is out until resets_at (can be days).
   parseError(response, bodyText) {
     if (response.status === 429 && bodyText) {
       try {
@@ -400,7 +401,8 @@ export class CodexExecutor extends BaseExecutor {
             resetsAtMs = now + err.resets_in_seconds * 1000;
           }
           if (resetsAtMs) {
-            return { status: 429, message: err.message || bodyText, resetsAtMs };
+            const window = err.limit_window_minutes ? `${err.limit_window_minutes}m` : "usage_limit";
+            return { status: 429, message: err.message || bodyText, resetsAtMs, quota: { resetsAtMs, scope: "account", window } };
           }
         }
       } catch { /* fall through to default */ }

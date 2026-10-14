@@ -39,15 +39,34 @@ function getCodexRateLimitBody(snapshot) {
     : snapshot;
 }
 
+function windowSeconds(window) {
+  const seconds = toFiniteNumber(window?.limit_window_seconds, NaN);
+  if (Number.isFinite(seconds) && seconds > 0) return seconds;
+  const minutes = toFiniteNumber(window?.window_minutes, NaN);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : null;
+}
+
 function formatCodexWindow(window) {
   const used = Math.max(0, Math.min(100, toFiniteNumber(window?.used_percent ?? window?.percent_used, 0)));
+  let resetAt = parseResetTime(window?.reset_at ?? window?.resets_at ?? window?.resetAt ?? null);
+  const resetAfter = toFiniteNumber(window?.reset_after_seconds, NaN);
+  if (!resetAt && Number.isFinite(resetAfter) && resetAfter > 0) resetAt = new Date(Date.now() + resetAfter * 1000).toISOString();
   return {
     used,
     total: 100,
     remaining: Math.max(0, 100 - used),
-    resetAt: parseResetTime(window?.reset_at ?? window?.resets_at ?? window?.resetAt ?? null),
+    resetAt,
+    windowSeconds: windowSeconds(window),
     unlimited: false,
   };
+}
+
+// "session" (5h) or "weekly" for a window. Primary/secondary is NOT 5h/weekly by
+// position: Pro accounts now report only a weekly window, sent as primary.
+function codexWindowKind(window, positional) {
+  const seconds = windowSeconds(window);
+  if (!seconds) return positional;
+  return seconds >= 24 * 3600 ? "weekly" : "session";
 }
 
 function appendCodexQuotaWindows(quotas, prefix, snapshot) {
@@ -58,12 +77,12 @@ function appendCodexQuotaWindows(quotas, prefix, snapshot) {
   const secondary = rateLimit.secondary_window || rateLimit.secondary || snapshot.secondary_window || snapshot.secondary;
   let added = false;
 
-  if (primary) {
-    quotas[prefix ? `${prefix}_session` : "session"] = formatCodexWindow(primary);
-    added = true;
-  }
-  if (secondary) {
-    quotas[prefix ? `${prefix}_weekly` : "weekly"] = formatCodexWindow(secondary);
+  for (const [window, positional] of [[primary, "session"], [secondary, "weekly"]]) {
+    if (!window) continue;
+    const kind = codexWindowKind(window, positional);
+    const key = prefix ? `${prefix}_${kind}` : kind;
+    if (quotas[key]) continue;
+    quotas[key] = formatCodexWindow(window);
     added = true;
   }
 
@@ -130,6 +149,7 @@ export async function getCodexUsage(accessToken, proxyOptions = null) {
     appendCodexQuotaWindows(quotas, "spark", sparkRateLimit);
 
     return {
+      fetchedAt: Date.now(),
       plan: data.plan_type || data.summary?.plan || "unknown",
       limitReached: getCodexRateLimitBody(normalRateLimit)?.limit_reached || false,
       reviewLimitReached: getCodexRateLimitBody(reviewRateLimit)?.limit_reached || false,

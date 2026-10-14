@@ -5,6 +5,8 @@ import { getProviderConnectionById } from "@/lib/localDb";
 import { consumeClaudeResetGrant } from "open-sse/services/usage.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "../route.js";
+import { liftQuotaLockNow } from "@/sse/services/quotaPoller.js";
+import { clearQuotaSnapshot } from "open-sse/services/quotaState.js";
 
 // Spend one free Claude "limit reset" grant (irreversible)
 export async function POST(request, { params }) {
@@ -30,7 +32,12 @@ export async function POST(request, { params }) {
     ({ connection } = await refreshAndUpdateCredentials(connection, false, proxyOptions));
     const result = await consumeClaudeResetGrant(connection.accessToken, grantId, proxyOptions);
 
-    if (result.ok) return Response.json(result);
+    if (result.ok) {
+      // The refilled account is usable now, not when its old lock would have expired.
+      clearQuotaSnapshot(connection.id);
+      await liftQuotaLockNow(connection.id).catch((e) => console.warn(`[Claude Reset] lock clear failed: ${e.message}`));
+      return Response.json(result);
+    }
     const status = result.status >= 400 && result.status < 500 ? result.status : 409;
     return Response.json({ ...result, message: result.message || `Reset not applied: ${result.reason || result.result || "unknown"}` }, { status });
   } catch (error) {

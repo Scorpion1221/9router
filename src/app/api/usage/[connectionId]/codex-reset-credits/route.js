@@ -5,6 +5,8 @@ import { getProviderConnectionById } from "@/lib/localDb";
 import { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits } from "open-sse/services/usage.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "../route.js";
+import { liftQuotaLockNow } from "@/sse/services/quotaPoller.js";
+import { clearQuotaSnapshot } from "open-sse/services/quotaState.js";
 
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
 
@@ -147,6 +149,11 @@ export async function POST(request, { params }) {
       }
     }
 
+    if (consumeResult.ok) {
+      // The refilled account is usable now, not when its old lock would have expired.
+      clearQuotaSnapshot(connection.id);
+      await liftQuotaLockNow(connection.id).catch((e) => console.warn(`[Codex Reset Credits] lock clear failed: ${e.message}`));
+    }
     return getResponseForConsumeResult(consumeResult, redeemRequestId);
   } catch (error) {
     const provider = connection?.provider ?? "unknown";

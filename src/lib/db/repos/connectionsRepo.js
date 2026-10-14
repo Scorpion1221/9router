@@ -276,6 +276,29 @@ export async function updateProviderConnection(id, data) {
   return result;
 }
 
+/**
+ * Like updateProviderConnection, but the patch is computed from the current row
+ * inside the same transaction (for decisions a stale snapshot would get wrong).
+ * @param {(current: object) => object|null} buildPatch - return null to skip the write
+ */
+export async function updateProviderConnectionWith(id, buildPatch) {
+  const db = await getAdapter();
+  let result;
+  db.transaction(() => {
+    const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
+    if (!row) { result = null; return; }
+    const existing = rowToConn(row);
+    const data = buildPatch(existing);
+    if (!data) { result = existing; return; }
+    const normalized = resetHealthStateOnActivation(existing, data);
+    const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
+    upsert(db, merged);
+    if (data.priority !== undefined) reorderInTx(db, existing.provider);
+    result = merged;
+  });
+  return result;
+}
+
 export async function deleteProviderConnection(id) {
   const db = await getAdapter();
   let ok = false;

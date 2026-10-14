@@ -181,3 +181,58 @@ describe("metrics and views", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("selection policy (reset-first)", () => {
+  const accountRoute = () => import("../../src/app/api/ops/accounts/[id]/route.js");
+  const poolRoute = () => import("../../src/app/api/ops/quota/route.js");
+  let operateToken;
+  beforeAll(async () => {
+    operateToken = (await repo.createOpsToken({ name: "operator", scope: "operate" })).token;
+  });
+  const patch = async (id, token, body) => (await accountRoute()).PATCH(
+    req(`/api/ops/accounts/${id}`, token, { method: "PATCH", body }), { params: Promise.resolve({ id }) });
+
+  it("needs operate to change an account's policy, and writes only the policy fields", async () => {
+    const conn = await createProviderConnection({
+      provider: "claude", authType: "oauth", name: "acct-policy", isActive: true,
+      accessToken: "sk-ant-oat01-SECRET", refreshToken: "REFRESH-SECRET",
+    });
+    await updateProviderConnection(conn.id, { modelLock___all: new Date(Date.now() + 60000).toISOString() });
+    expect((await patch("acct-policy", readToken, { poolRole: "reserve" })).status).toBe(403);
+
+    const res = await json(await patch("acct-policy", operateToken, { poolRole: "reserve", keepPct: 30, releaseBeforeHours: 12 }));
+    expect(res.status).toBe(200);
+    expect(res.body.account).toMatchObject({ poolRole: "reserve", keepPct: 30, releaseBeforeHours: 12 });
+    expect(Object.keys(res.body.changed).sort()).toEqual(["keepPct", "poolRole", "releaseBeforeHours"]);
+    expect(JSON.stringify(res.body)).not.toMatch(/SECRET/);
+    const { getProviderConnectionById } = await import("../../src/lib/db/repos/connectionsRepo.js");
+    const stored = await getProviderConnectionById(conn.id);
+    expect(stored).toMatchObject({ poolRole: "reserve", keepPct: 30, releaseBeforeHours: 12, refreshToken: "REFRESH-SECRET" });
+    expect(Date.parse(stored.modelLock___all)).toBeGreaterThan(Date.now()); // locks untouched
+
+    const again = await json(await patch("acct-policy", operateToken, { poolRole: "reserve" }));
+    expect(again.body.changed).toEqual({});
+  });
+
+  it("rejects unknown fields, bad values and non-quota providers", async () => {
+    expect((await patch("acct-policy", operateToken, { accessToken: "x" })).status).toBe(400);
+    expect((await patch("acct-policy", operateToken, { keepPct: 150 })).status).toBe(400);
+    expect((await patch("acct-policy", operateToken, {})).status).toBe(400);
+    await createProviderConnection({ provider: "openai", authType: "apikey", name: "acct-openai", isActive: true, apiKey: "sk-SECRET" });
+    expect((await patch("acct-openai", operateToken, { keepPct: 10 })).status).toBe(400);
+    expect((await patch("no-such-account", operateToken, { keepPct: 10 })).status).toBe(404);
+  });
+
+  it("shows the pool with policy and order, without credentials", async () => {
+    const res = await (await poolRoute()).GET(req("/api/ops/quota?provider=claude", readToken));
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    expect(text).not.toMatch(/SECRET/);
+    const body = JSON.parse(text);
+    expect(body.strategy).toBe("fill-first");
+    const acct = body.accounts.find((a) => a.name === "acct-policy");
+    expect(acct).toMatchObject({ role: "reserve", keepPct: 30, state: "locked" });
+    expect((await (await poolRoute()).GET(req("/api/ops/quota?provider=openai", readToken))).status).toBe(400);
+    expect((await (await poolRoute()).GET(req("/api/ops/quota", readToken))).status).toBe(400);
+  });
+});

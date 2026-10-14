@@ -194,6 +194,10 @@ export async function GET(request, { params }) {
       }
     }
 
+    // A dashboard read is as good as a background poll for routing (and can lift a stale quota lock).
+    const { applyQuotaReading } = await import("@/sse/services/quotaPoller.js");
+    await applyQuotaReading(connection, usage).catch(() => {});
+
     return Response.json(usage);
   } catch (error) {
     const provider = connection?.provider ?? "unknown";

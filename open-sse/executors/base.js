@@ -2,6 +2,7 @@ import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FET
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
+import { recordQuotaHeaders, quotaRejectionFromHeaders } from "../services/quotaState.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 
@@ -94,7 +95,13 @@ export class BaseExecutor {
   }
 
   parseError(response, bodyText) {
-    return { status: response.status, message: bodyText || `HTTP ${response.status}` };
+    const parsed = { status: response.status, message: bodyText || `HTTP ${response.status}` };
+    // Claude subscription 429s name the exhausted window and its reset in headers.
+    if (response.status === 429) {
+      const quota = quotaRejectionFromHeaders(this.provider, response.headers);
+      if (quota) Object.assign(parsed, { resetsAtMs: quota.resetsAtMs, quota });
+    }
+    return parsed;
   }
 
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null }) {
@@ -160,6 +167,8 @@ export class BaseExecutor {
         const ct = response.headers?.get?.("content-type") || "";
         const cl = response.headers?.get?.("content-length") || "?";
         dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
+        // Every response (success, error, retried) carries the account's live quota.
+        recordQuotaHeaders(this.provider, credentials?.connectionId, response.headers);
 
         if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) { urlIndex--; continue; }
 

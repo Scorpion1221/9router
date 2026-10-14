@@ -9,6 +9,20 @@ import Badge from "@/shared/components/Badge";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import Select from "@/shared/components/Select";
 
+// Providers whose accounts expose live quota windows (reset-first routing).
+const QUOTA_POLICY_PROVIDERS = new Set(["claude", "codex"]);
+
+function policyFromConnection(connection) {
+  const keep = Number(connection?.keepPct);
+  const release = Number(connection?.releaseBeforeHours);
+  return {
+    poolRole: connection?.poolRole === "reserve" ? "reserve" : "normal",
+    keepPct: Number.isFinite(keep) && keep > 0 ? keep : 0,
+    releaseEnabled: Number.isFinite(release) && release > 0,
+    releaseBeforeHours: Number.isFinite(release) && release > 0 ? release : 12,
+  };
+}
+
 export default function EditConnectionModal({ isOpen, connection, proxyPools, onSave, onClose }) {
   const [formData, setFormData] = useState({
     name: "",
@@ -31,6 +45,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [policy, setPolicy] = useState(policyFromConnection(null));
 
   useEffect(() => {
     if (connection) {
@@ -39,6 +54,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         priority: connection.priority || 1,
         apiKey: "",
       });
+      setPolicy(policyFromConnection(connection));
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
         setAzureData({
@@ -82,6 +98,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   }, [connection, isOpen]);
 
   const isOAuth = connection?.authType === "oauth";
+  const showPolicy = isOAuth && QUOTA_POLICY_PROVIDERS.has(connection?.provider);
   const isAzure = connection?.provider === "azure";
   const isCloudflareAi = connection?.provider === "cloudflare-ai";
   const isVertex = connection?.provider === "vertex" || connection?.provider === "vertex-partner";
@@ -152,14 +169,31 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
     }
   };
 
+  const policyError = (() => {
+    if (!showPolicy) return null;
+    const keep = Number(policy.keepPct);
+    if (policy.keepPct === "" || !Number.isInteger(keep) || keep < 0 || keep > 100) return "Keep must be a whole number from 0 to 100.";
+    const hours = Number(policy.releaseBeforeHours);
+    if (policy.releaseEnabled && (policy.releaseBeforeHours === "" || !(hours > 0) || hours > 168)) return "Hours before the weekly reset must be from 1 to 168.";
+    return null;
+  })();
+
   const handleSubmit = async () => {
-    if (!connection) return;
+    if (!connection || policyError) return;
     setSaving(true);
     try {
       const updates = {
         name: formData.name,
         priority: formData.priority,
       };
+      if (showPolicy) {
+        // Send only what changed, so an edit elsewhere never rewrites the policy.
+        const before = policyFromConnection(connection);
+        const releaseHours = (p) => (p.releaseEnabled ? Number(p.releaseBeforeHours) || 0 : 0);
+        if (policy.poolRole !== before.poolRole) updates.poolRole = policy.poolRole;
+        if (Number(policy.keepPct) !== before.keepPct) updates.keepPct = Number(policy.keepPct);
+        if (releaseHours(policy) !== releaseHours(before)) updates.releaseBeforeHours = releaseHours(policy);
+      }
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
         let isValid = validationResult === "success";
@@ -428,6 +462,59 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           />
         )}
 
+        {showPolicy && (
+          <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
+            <div>
+              <p className="text-sm font-semibold">Gateway usage</p>
+              <p className="text-xs text-text-muted">Applies when the provider uses the Reset first strategy.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { value: "normal", label: "Normal", hint: "Used by the strategy" },
+                { value: "reserve", label: "Reserve", hint: "Only when no normal account can" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPolicy({ ...policy, poolRole: opt.value })}
+                  className={`rounded-lg border p-2 text-left text-xs transition-colors ${policy.poolRole === opt.value ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}
+                >
+                  <span className="block text-sm font-medium">{opt.label}</span>
+                  <span className="text-text-muted">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+            <Input
+              label="Keep (%)"
+              type="number"
+              min={0}
+              max={100}
+              value={policy.keepPct}
+              onChange={(e) => setPolicy({ ...policy, keepPct: e.target.value === "" ? "" : Number(e.target.value) })}
+              hint="Stop routing to this account once any window (5h or weekly) has less than this left. 0 uses it all."
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={policy.releaseEnabled}
+                onChange={(e) => setPolicy({ ...policy, releaseEnabled: e.target.checked })}
+              />
+              <span>Ignore Keep in the last</span>
+              <input
+                type="number"
+                min={1}
+                max={168}
+                value={policy.releaseBeforeHours}
+                disabled={!policy.releaseEnabled}
+                onChange={(e) => setPolicy({ ...policy, releaseBeforeHours: e.target.value === "" ? "" : Number(e.target.value) })}
+                className="w-16 rounded-md border border-border bg-background px-2 py-1 text-xs disabled:opacity-50"
+              />
+              <span>hours before the weekly reset</span>
+            </label>
+            {policyError && <p className="text-xs text-red-500">{policyError}</p>}
+          </div>
+        )}
+
         {!isCompatible && !isAzure && !isCloudflareAi && !isVertex && (
           <div className="flex items-center gap-3">
             <Button onClick={handleTest} variant="secondary" disabled={testing}>
@@ -442,7 +529,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         )}
 
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={saving}>{saving ? "Saving..." : "Save"}</Button>
+          <Button onClick={handleSubmit} fullWidth disabled={saving || !!policyError}>{saving ? "Saving..." : "Save"}</Button>
           <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
         </div>
       </div>
@@ -460,6 +547,9 @@ EditConnectionModal.propTypes = {
     authType: PropTypes.string,
     provider: PropTypes.string,
     providerSpecificData: PropTypes.object,
+    poolRole: PropTypes.string,
+    keepPct: PropTypes.number,
+    releaseBeforeHours: PropTypes.number,
   }),
   proxyPools: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,

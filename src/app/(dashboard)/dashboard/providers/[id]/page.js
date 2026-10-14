@@ -22,6 +22,9 @@ import ConnectionRow from "./ConnectionRow";
 import SortableConnectionList, { saveConnectionOrder } from "./SortableConnectionList";
 import ConnectionQuota from "./ConnectionQuota";
 import useConnectionQuotas, { supportsQuota } from "@/shared/hooks/useConnectionQuotas";
+
+// Providers with live quota windows, where the reset-first strategy applies.
+const RESET_FIRST_PROVIDERS = new Set(["claude", "codex"]);
 import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
@@ -379,8 +382,10 @@ export default function ProviderDetailPage() {
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       const current = settingsData.providerStrategies || {};
 
-      // Build override: null strategy means remove override, use global
-      const override = {};
+      // Build override: null strategy means remove override, use global. Start from the
+      // stored override so keys this page doesn't edit survive.
+      const { fallbackStrategy: _prevStrategy, stickyRoundRobinLimit: _prevSticky, ...kept } = current[providerId] || {};
+      const override = { ...kept };
       if (strategy) override.fallbackStrategy = strategy;
       if (strategy === "round-robin" && stickyLimit !== "") {
         override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
@@ -407,6 +412,15 @@ export default function ProviderDetailPage() {
     const strategy = enabled ? "round-robin" : null;
     const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
     if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
+    setProviderStrategy(strategy);
+    saveProviderStrategy(strategy, sticky);
+  };
+
+  // Claude/Codex: fill-first | round-robin | reset-first. "" = inherit the global strategy.
+  const handleStrategySelect = (value) => {
+    const strategy = value || null;
+    const sticky = strategy === "round-robin" ? (providerStickyLimit || "1") : providerStickyLimit;
+    if (strategy === "round-robin" && !providerStickyLimit) setProviderStickyLimit("1");
     setProviderStrategy(strategy);
     saveProviderStrategy(strategy, sticky);
   };
@@ -1560,13 +1574,32 @@ export default function ProviderDetailPage() {
                   )}
                 </>
               )}
-              {/* Round Robin toggle */}
+              {/* Account strategy: Claude/Codex also offer reset-first (quota-aware) */}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-text-muted font-medium">Round Robin</span>
-                <Toggle
-                  checked={providerStrategy === "round-robin"}
-                  onChange={handleRoundRobinToggle}
-                />
+                {RESET_FIRST_PROVIDERS.has(providerId) ? (
+                  <>
+                    <span className="text-xs text-text-muted font-medium">Strategy</span>
+                    <select
+                      value={providerStrategy || ""}
+                      onChange={(e) => handleStrategySelect(e.target.value)}
+                      title="Reset first: use the account whose weekly quota resets soonest; reserve accounts last"
+                      className="px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
+                    >
+                      <option value="">Default (global)</option>
+                      <option value="fill-first">Fill first</option>
+                      <option value="round-robin">Round robin</option>
+                      <option value="reset-first">Reset first</option>
+                    </select>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xs text-text-muted font-medium">Round Robin</span>
+                    <Toggle
+                      checked={providerStrategy === "round-robin"}
+                      onChange={handleRoundRobinToggle}
+                    />
+                  </>
+                )}
                 {providerStrategy === "round-robin" && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-text-muted">Sticky:</span>

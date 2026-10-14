@@ -70,7 +70,7 @@ export async function parseUpstreamError(response, executor = null) {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
         const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
-        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs };
+        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs, quota: parsed.quota || null };
       }
     } catch { /* fall through to default parsing */ }
   }
@@ -94,14 +94,17 @@ export async function parseUpstreamError(response, executor = null) {
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
  * @param {number} [resetsAtMs] - Optional precise cooldown expiry (ms epoch) for provider-specific quota errors
- * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number }}
+ * @param {object} [extraHeaders]
+ * @param {{resetsAtMs: number, scope: "account"|"model", window: string}|null} [quota] - Quota-window rejection (lock until its reset)
+ * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number, quota?: object }}
  */
-export function createErrorResult(statusCode, message, resetsAtMs, extraHeaders = null) {
+export function createErrorResult(statusCode, message, resetsAtMs, extraHeaders = null, quota = null) {
   return {
     success: false,
     status: statusCode,
     error: message,
     resetsAtMs,
+    ...(quota ? { quota } : {}),
     response: errorResponse(statusCode, message, extraHeaders)
   };
 }

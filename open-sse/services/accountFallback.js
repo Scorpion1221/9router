@@ -133,10 +133,23 @@ export function getModelLockKey(model) {
  * Reads flat field `modelLock_${model}` (or `modelLock___all` when model=null).
  */
 export function isModelLockActive(connection, model) {
-  const key = getModelLockKey(model);
-  const expiry = connection[key] || connection[MODEL_LOCK_ALL];
-  if (!expiry) return false;
-  return new Date(expiry).getTime() > Date.now();
+  return getBlockingLockUntil(connection, model) !== null;
+}
+
+/**
+ * When the lock that blocks `model` on this connection ends (ISO), or null.
+ * The model's own lock and the account-wide lock are checked independently: an
+ * expired model lock must not hide an active account-wide one.
+ */
+export function getBlockingLockUntil(connection, model) {
+  if (!connection) return null;
+  const now = Date.now();
+  let latest = null;
+  for (const key of new Set([getModelLockKey(model), MODEL_LOCK_ALL])) {
+    const t = connection[key] ? new Date(connection[key]).getTime() : NaN;
+    if (t > now && (latest === null || t > latest)) latest = t;
+  }
+  return latest === null ? null : new Date(latest).toISOString();
 }
 
 /**

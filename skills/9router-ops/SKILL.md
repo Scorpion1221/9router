@@ -16,13 +16,15 @@ Start with `9r` (no arguments): it prints the live overview and suggests next co
 | Which model or client is failing? | `9r health --since 6h --by model` / `--by key` / `--by error` |
 | Why are requests failing? | `9r errors --since 1h` |
 | Are accounts locked or rate limited? | `9r accounts --provider claude` / `9r accounts --state locked` |
-| How much quota is left? | `9r quota <account name>` |
+| How much quota is left? | `9r quota --provider claude` (all accounts + the order they are used in) / `9r quota <account name>` |
+| Keep an account mostly for yourself | `9r accounts set <name> --role reserve --keep 30 [--release-before 12h]` (operate token) |
 | Who still uses model X? | `9r usage --by key,model --model <substring>` |
 | Routing config | `9r combos`, `9r keys` |
 
 Reading the numbers:
 - `success` excludes client aborts (499) and rejected input (4xx). Those are not gateway faults.
 - `ttftP50` / `ttftP90`: time to first byte of successful requests.
-- An account in state `locked` is cooling down after an upstream error. `lockedFor` shows how long is left.
+- An account in state `locked` is cooling down after an upstream error. `lockedFor` shows how long is left. An exhausted quota window locks it until that window resets (can be days); a reset seen by the 15-min quota poll or a manual reset lifts it early.
+- With the `reset-first` strategy, `9r quota --provider` orders normal accounts by earliest weekly reset (spend quota before it expires); reserve accounts (`R1`, `R2`) only take traffic when no normal one can. `below keep` means an account is under its keep line.
 
 Output is TOON. Errors are printed on stdout too, with a `help` line naming the fix.
