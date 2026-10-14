@@ -112,6 +112,36 @@ describe("account-scoped, version-aware discovery", () => {
     mocks.db.mockRejectedValue(new Error("DB offline"));
     expect((await resolveCodexModels(account())).models[0].id).toBe("gpt-6-astra");
   });
+  it("stops waiting on a discovery that never settles, serves the last catalog, and lets the late result land", async () => {
+    await resolveCodexModels(account()); vi.setSystemTime(Date.now() + 11 * 60_000);
+    let finish;
+    mocks.fetch.mockImplementation((url) => url.includes("registry.npmjs.org") ? ok({ name: "@openai/codex", version: "0.153.4" }) : new Promise((r) => { finish = r; }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const waiters = Promise.all(Array.from({ length: 5 }, () => resolveCodexModels(account())));
+    await vi.advanceTimersByTimeAsync(20_000);
+    const results = await waiters;
+    expect(results.every((r) => r.stale && r.models[0].id === "gpt-6-astra")).toBe(true);
+    expect(modelsCalls()).toHaveLength(2);
+    expect(warn.mock.calls[0][0]).toMatch(/stuck in models request after 20s/);
+    expect(warn.mock.calls[0][0]).not.toMatch(/secret|workspace/);
+    // Backed off: the next minute is served from cache without a new lookup.
+    await resolveCodexModels(account()); expect(modelsCalls()).toHaveLength(2);
+    // After the back-off, a lookup that is still stuck is not stacked on.
+    vi.setSystemTime(Date.now() + 61_000);
+    expect((await resolveCodexModels(account())).stale).toBe(true); expect(modelsCalls()).toHaveLength(2);
+    finish(ok(manifest("gpt-late"))); await vi.advanceTimersByTimeAsync(0);
+    vi.setSystemTime(Date.now() + 61_000);
+    expect((await resolveCodexModels(account())).models[0].id).toBe("gpt-late");
+    warn.mockRestore();
+  });
+  it("does not let a hung release lookup block discovery", async () => {
+    mocks.fetch.mockImplementation((url) => url.includes("registry.npmjs.org") ? new Promise(() => {}) : ok(manifest()));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pending = resolveCodexModels(account());
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await pending).toMatchObject({ clientVersion: "0.153.4", stale: false });
+    warn.mockRestore();
+  });
   it("unions active accounts only and uses conservative native context", async () => {
     mocks.fetch.mockImplementation(async (url, options) => url.includes("registry.npmjs.org") ? ok({ name: "@openai/codex", version: "0.153.4" }) : ok(manifest("gpt-6-astra", options.headers.Authorization.endsWith("a") ? 272000 : 128000)));
     const catalog = await getCodexModelCatalog([account(), account("b"), account("c", { isActive: false }), account("d", { provider: "openai" })]);

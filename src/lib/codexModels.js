@@ -13,8 +13,25 @@ const TTL_MS = 10 * 60 * 1000;
 const RETRY_MS = 60 * 1000;
 const VERSION_URL = "https://registry.npmjs.org/@openai/codex/latest";
 const FALLBACK_VERSION = "0.153.4";
+// Every request for an account awaits the same in-flight lookup, so one that
+// never settles stalls all of them (production 2026-10-14: a catalog refresh
+// hung for 2h and no Codex request reached upstream). Stop waiting after these
+// budgets and serve the last known value; the lookup itself keeps running so a
+// token refresh in progress is not cut off.
+const VERSION_DEADLINE_MS = 10 * 1000;
+const DISCOVERY_DEADLINE_MS = 20 * 1000;
 const memory = new Map();
 const inflight = new Map();
+// Lookups abandoned at the deadline but still running; don't pile more on top.
+const abandoned = new Set();
+
+class DeadlineError extends Error {}
+
+function withDeadline(promise, ms) {
+  let timer;
+  const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new DeadlineError()), ms); });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
 
 async function readCache(key) {
   if (memory.has(key)) return memory.get(key);
@@ -44,23 +61,23 @@ async function clientVersion(forceRefresh) {
   const cached = await readCache("version");
   if (!forceRefresh && cached?.expiresAt > Date.now()) return cached.version;
   if (inflight.has("version")) return inflight.get("version");
-  const request = (async () => {
-    try {
-      // Do not send account credentials or account-bound headers to npm.
-      const response = await proxyAwareFetch(VERSION_URL, { signal: AbortSignal.timeout(5000) });
-      if (!response.ok) throw new Error("Release metadata unavailable");
-      const data = await response.json();
-      if (data.name !== "@openai/codex" || !/^\d+\.\d+\.\d+$/.test(data.version)) {
-        throw new Error("Invalid stable release metadata");
-      }
-      await writeCache("version", { version: data.version, expiresAt: Date.now() + TTL_MS });
-      return data.version;
-    } catch {
-      const version = cached?.version || FALLBACK_VERSION;
-      await writeCache("version", { version, expiresAt: Date.now() + RETRY_MS });
-      return version;
+  const lookup = (async () => {
+    // Do not send account credentials or account-bound headers to npm.
+    const response = await proxyAwareFetch(VERSION_URL, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error("Release metadata unavailable");
+    const data = await response.json();
+    if (data.name !== "@openai/codex" || !/^\d+\.\d+\.\d+$/.test(data.version)) {
+      throw new Error("Invalid stable release metadata");
     }
+    await writeCache("version", { version: data.version, expiresAt: Date.now() + TTL_MS });
+    return data.version;
   })();
+  const request = withDeadline(lookup, VERSION_DEADLINE_MS).catch(async (error) => {
+    if (error instanceof DeadlineError) console.warn(`[CodexModels] release lookup unanswered after ${VERSION_DEADLINE_MS / 1000}s; using the last version`);
+    const version = cached?.version || FALLBACK_VERSION;
+    await writeCache("version", { version, expiresAt: Date.now() + RETRY_MS });
+    return version;
+  });
   inflight.set("version", request);
   try { return await request; } finally { inflight.delete("version"); }
 }
@@ -107,41 +124,53 @@ export async function resolveCodexModels(connection, { forceRefresh = false } = 
   if (!forceRefresh && cached?.retryAfter > Date.now()) return cached;
   if (!forceRefresh && cached?.expiresAt > Date.now() && cached.clientVersion === version) return cached;
   if (inflight.has(key)) return inflight.get(key);
-  const request = (async () => {
-    try {
-      const proxy = await resolveConnectionProxyConfig(ps);
-      const fetchModels = (token) => proxyAwareFetch(
-        `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(version)}`,
-        {
-          headers: {
-            Accept: "application/json", Authorization: `Bearer ${token}`, originator: "codex_cli_rs",
-            ...(account ? { "ChatGPT-Account-ID": account } : {}),
-          },
-          signal: AbortSignal.timeout(10000),
-        }, proxy,
-      );
-      let response = await fetchModels(connection.accessToken);
-      if ((response.status === 401 || response.status === 403) && connection.refreshToken) {
-        await response.body?.cancel();
-        const refreshed = await refreshCodexToken(connection.refreshToken);
-        if (refreshed?.accessToken) {
-          await updateProviderCredentials(connection.id, refreshed);
-          response = await fetchModels(refreshed.accessToken);
-        }
+  let stage = "proxy config";
+  const discovery = abandoned.has(key) ? Promise.reject(new Error("previous discovery still running")) : (async () => {
+    const proxy = await resolveConnectionProxyConfig(ps);
+    const fetchModels = (token) => proxyAwareFetch(
+      `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(version)}`,
+      {
+        headers: {
+          Accept: "application/json", Authorization: `Bearer ${token}`, originator: "codex_cli_rs",
+          ...(account ? { "ChatGPT-Account-ID": account } : {}),
+        },
+        signal: AbortSignal.timeout(10000),
+      }, proxy,
+    );
+    stage = "models request";
+    let response = await fetchModels(connection.accessToken);
+    if ((response.status === 401 || response.status === 403) && connection.refreshToken) {
+      await response.body?.cancel();
+      stage = "token refresh";
+      const refreshed = await refreshCodexToken(connection.refreshToken);
+      if (refreshed?.accessToken) {
+        stage = "token save";
+        await updateProviderCredentials(connection.id, refreshed);
+        stage = "models request (new token)";
+        response = await fetchModels(refreshed.accessToken);
       }
-      if (!response.ok) throw new Error(`Codex catalog HTTP ${response.status}`);
-      const models = normalizeCodexModels(await response.json());
-      if (!models.length) throw new Error("Codex returned no visible models");
-      const result = { models, source: "codex", clientVersion: version, fetchedAt: new Date().toISOString(), expiresAt: Date.now() + TTL_MS, stale: false };
-      await writeCache(key, result);
-      return result;
-    } catch {
-      // No raw upstream bodies/errors: they may contain credentials or prompts.
-      const result = { ...cached, models: cached?.models || [], source: cached?.models?.length ? "codex" : "unavailable", stale: true, warning: "Codex discovery unavailable; retaining the last successful catalog", expiresAt: Date.now() + RETRY_MS, retryAfter: Date.now() + RETRY_MS };
-      await writeCache(key, result);
-      return result;
     }
+    if (!response.ok) throw new Error(`Codex catalog HTTP ${response.status}`);
+    stage = "models body";
+    const models = normalizeCodexModels(await response.json());
+    if (!models.length) throw new Error("Codex returned no visible models");
+    const result = { models, source: "codex", clientVersion: version, fetchedAt: new Date().toISOString(), expiresAt: Date.now() + TTL_MS, stale: false };
+    await writeCache(key, result);
+    return result;
   })();
+  const request = withDeadline(discovery, DISCOVERY_DEADLINE_MS).catch(async (error) => {
+    if (error instanceof DeadlineError) {
+      abandoned.add(key);
+      const settled = () => abandoned.delete(key);
+      discovery.then(settled, settled);
+      // The key is a hash of the account identity, safe to log for correlation.
+      console.warn(`[CodexModels] discovery ${key.slice(8, 16)} stuck in ${stage} after ${DISCOVERY_DEADLINE_MS / 1000}s; using the last catalog`);
+    }
+    // No raw upstream bodies/errors: they may contain credentials or prompts.
+    const result = { ...cached, models: cached?.models || [], source: cached?.models?.length ? "codex" : "unavailable", stale: true, warning: "Codex discovery unavailable; retaining the last successful catalog", expiresAt: Date.now() + RETRY_MS, retryAfter: Date.now() + RETRY_MS };
+    await writeCache(key, result);
+    return result;
+  });
   inflight.set(key, request);
   try { return await request; } finally { inflight.delete(key); }
 }
@@ -171,4 +200,5 @@ export async function getCodexModelCatalog(connections, options = {}) {
 export function clearCodexModelMemoryCache() {
   memory.clear();
   inflight.clear();
+  abandoned.clear();
 }
