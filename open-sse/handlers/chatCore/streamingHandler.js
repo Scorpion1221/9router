@@ -119,7 +119,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 /**
  * Build onStreamComplete callback for streaming usage tracking.
  */
-export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log }) {
+export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, onStreamOutcome, pxpipe, reqTag, log }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = (contentObj, usage, ttftAt) => {
@@ -147,6 +147,13 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
     saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE", silent: true });
     if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency }));
+    // HTTP 200 alone doesn't mean the call worked: an in-band error event, or a
+    // stream that carried nothing at all, is a failed attempt.
+    const errorType = contentObj?.errorType;
+    const hasUsage = usage && ((usage.prompt_tokens ?? usage.input_tokens ?? 0) > 0 || (usage.completion_tokens ?? usage.output_tokens ?? 0) > 0);
+    if (errorType) onStreamOutcome?.({ outcome: "error", status: /overload/i.test(errorType) ? 529 : 502, errorType });
+    else if (!contentObj?.content && !contentObj?.thinking && !hasUsage && contentObj?.produced === false) onStreamOutcome?.({ outcome: "error", status: 502, errorType: "empty_stream" });
+    else onStreamOutcome?.({ outcome: "ok", status: 200, ttftMs: latency.ttft, totalMs: latency.total });
   };
 
   return { onStreamComplete, streamDetailId };

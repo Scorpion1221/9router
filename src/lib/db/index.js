@@ -74,6 +74,14 @@ export {
   saveRequestDetail, getRequestDetails, getRequestDetailById, getDistinctProviders,
 } from "./repos/requestDetailsRepo.js";
 
+// Ops API tokens + per-request metrics (/api/ops/*)
+export {
+  OPS_TOKEN_PREFIX, OPS_SCOPES, listOpsTokens, createOpsToken, revokeOpsToken, verifyOpsToken, scopeAllows,
+} from "./repos/opsTokensRepo.js";
+export {
+  recordRequestMetric, flushRequestMetrics, getRequestMetricsSummary, errorTypeForStatus, outcomeForStatus, REQUEST_METRICS_RETENTION_DAYS,
+} from "./repos/requestMetricsRepo.js";
+
 // Export/import full DB
 export async function exportDb() {
   const db = await getAdapter();

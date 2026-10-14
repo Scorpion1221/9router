@@ -26,13 +26,96 @@ import { updateProviderCredentials, checkAndRefreshToken } from "../services/tok
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
+import { recordRequestMetric, errorTypeForStatus, outcomeForStatus } from "@/lib/db/repos/requestMetricsRepo.js";
+
+// Per-request ops context: which model/combo the client asked for, and how
+// the last upstream stream attempt ended (set by the account loop), so the
+// request row reflects mid-stream failures and normal Responses-API closes.
+const requestOps = new WeakMap();
 
 /**
  * Handle chat completion request
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
  * Format detection and translation handled by translator
+ *
+ * Also records the ops metric for what the client got (kind "request"). A
+ * streamed request is recorded when its stream ends.
  */
 export async function handleChat(request, clientRawRequest = null) {
+  const ops = { startedAt: Date.now(), model: null, stream: null, lastStream: null };
+  requestOps.set(request, ops);
+  let response;
+  try {
+    response = await handleChatInner(request, clientRawRequest, (model, stream) => { ops.model = model; ops.stream = stream; });
+  } catch (error) {
+    if (ops.model) recordRequestOutcome(request, ops, { status: request?.signal?.aborted ? 499 : 500 });
+    throw error;
+  }
+  if (!ops.model || !response) return response;
+  const status = response.status;
+  const isStream = status >= 200 && status < 300 && (response.headers.get("content-type") || "").includes("text/event-stream") && response.body;
+  if (!isStream) {
+    recordRequestOutcome(request, ops, { status });
+    return response;
+  }
+  return new Response(watchStreamOutcome(response.body, ops, (end) => recordRequestOutcome(request, ops, end)), {
+    status: response.status, statusText: response.statusText, headers: response.headers,
+  });
+}
+
+function recordRequestOutcome(request, ops, { status, ttftMs = null, errorType = null }) {
+  let endpoint = null;
+  try { endpoint = new URL(request.url).pathname; } catch { /* keep null */ }
+  recordRequestMetric({
+    kind: "request",
+    model: ops.model,
+    apiKey: extractApiKey(request),
+    endpoint,
+    stream: ops.stream,
+    status,
+    outcome: outcomeForStatus(status),
+    errorType: errorType || errorTypeForStatus(status),
+    ttftMs,
+    totalMs: Date.now() - ops.startedAt,
+  });
+}
+
+// Pass a stream through unchanged and report how it ended. TTFT is measured
+// from request arrival (header wait, account walk and combo probe included).
+// The upstream attempt's own verdict wins where the bytes alone mislead: an
+// in-band error before [DONE], or a client that closes right after a completed
+// Responses-API stream (codex does that on response.completed).
+function watchStreamOutcome(body, ops, report) {
+  const reader = body.getReader();
+  let ttft = null;
+  let done = false;
+  const finish = (fallback) => {
+    if (done) return;
+    done = true;
+    const last = ops.lastStream;
+    const end = last && (last.outcome === "error" || (last.outcome === "ok" && fallback.status === 499)) ? last : fallback;
+    report({ status: end.status, errorType: end.errorType || null, ttftMs: ttft });
+  };
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done: end, value } = await reader.read();
+        if (end) { finish({ status: 200 }); controller.close(); return; }
+        if (ttft == null) ttft = Date.now() - ops.startedAt;
+        controller.enqueue(value);
+      } catch (error) {
+        finish({ status: 502, errorType: "stream_error" });
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      finish({ status: 499, errorType: "client_abort" });
+      return reader.cancel(reason);
+    },
+  });
+}
+
+async function handleChatInner(request, clientRawRequest = null, noteTarget = () => {}) {
   let body;
   try {
     body = await request.json();
@@ -86,6 +169,7 @@ export async function handleChat(request, clientRawRequest = null) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
+  noteTarget(modelStr, body.stream === true);
 
   // Per-key access control: a restricted key may call only its listed combos and
   // models. Checked once on the requested target, before bypass, combo expansion
@@ -97,7 +181,10 @@ export async function handleChat(request, clientRawRequest = null) {
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
-  if (bypassResponse) return bypassResponse.response || bypassResponse;
+  if (bypassResponse) {
+    noteTarget(null); // answered locally, never reached an upstream: not ops traffic
+    return bypassResponse.response || bypassResponse;
+  }
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
@@ -297,7 +384,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    const result = await handleChatCore({
+    const attemptStart = Date.now();
+    let attemptRecorded = false;
+    const recordAttempt = (m) => {
+      if (attemptRecorded) return;
+      attemptRecorded = true;
+      const ops = request ? requestOps.get(request) : null;
+      if (ops) ops.lastStream = m;
+      recordRequestMetric({
+        kind: "attempt", provider, model, connectionId: credentials.connectionId,
+        apiKey, stream: body.stream === true, totalMs: Date.now() - attemptStart, ...m,
+      });
+    };
+    let result;
+    try {
+    result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -328,6 +429,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       clientSignal,
+      onStreamOutcome: recordAttempt,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           ...newCreds,
@@ -341,12 +443,26 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         clearAntigravityStrikes(credentials.connectionId, model);
       }
     });
+    } catch (error) {
+      recordAttempt(clientSignal?.aborted
+        ? { status: 499, outcome: "aborted", errorType: "client_abort" }
+        : { status: 502, outcome: "error", errorType: "upstream_exception" });
+      throw error;
+    }
 
     // Checked before any account bookkeeping: an abort mid-body surfaces as a 502
     // that would otherwise lock a healthy account and move on to the next one.
     if (clientSignal?.aborted) {
       result.response?.body?.cancel?.().catch(() => { });
+      recordAttempt({ status: 499, outcome: "aborted", errorType: "client_abort" });
       return clientGone();
+    }
+
+    // Streams report their own end through onStreamOutcome; everything else ends here.
+    const isStream = result.success && (result.response?.headers?.get?.("content-type") || "").includes("text/event-stream");
+    if (!isStream) {
+      const status = result.success ? (result.response?.status || 200) : result.status;
+      recordAttempt({ status, outcome: outcomeForStatus(status), errorType: errorTypeForStatus(status) });
     }
 
     if (result.success) return result.response;

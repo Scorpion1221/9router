@@ -36,6 +36,11 @@ const PUBLIC_API_PATHS = [
   "/api/openrouter",
 ];
 
+// Ops API: authenticated inside each route by a Bearer ops token only
+// (src/lib/ops/auth.js). Cookies, the CLI token and inference keys are not
+// accepted there, so the middleware must not grant or demand them either.
+const OPS_API_PREFIX = "/api/ops";
+
 // Public top-level prefixes (LLM API endpoints with their own API key auth).
 // Keep root-level rewrites here too: middleware runs before Next.js rewrites.
 const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex", "/responses"];
@@ -44,6 +49,8 @@ const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex", "
 const ALWAYS_PROTECTED = [
   "/api/shutdown",
   "/api/settings/database",
+  // Issues long-lived management credentials.
+  "/api/settings/ops-tokens",
   "/api/version/shutdown",
   "/api/version/update",
   "/api/oauth/cursor/auto-import",
@@ -228,6 +235,8 @@ export async function proxy(request) {
     if (await canAccessPublicLlmApi(request)) return NextResponse.next();
     return NextResponse.json({ error: "API key required for remote API access" }, { status: 401 });
   }
+
+  if (pathname === OPS_API_PREFIX || pathname.startsWith(`${OPS_API_PREFIX}/`)) return NextResponse.next();
 
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {

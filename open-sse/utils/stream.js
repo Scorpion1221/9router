@@ -78,6 +78,18 @@ export function createSSEStream(options = {}) {
     : null;
 
   let totalContentLength = 0;
+  // First in-band error event seen (Anthropic `event: error`, OpenAI `{error:…}`
+  // chunk): the HTTP status was 200, so this is the only sign the call failed.
+  let streamErrorType = null;
+  const noteStreamError = (parsed) => {
+    if (streamErrorType || !parsed || typeof parsed !== "object") return;
+    const err = parsed.type === "error" ? parsed.error : (parsed.error && !parsed.choices ? parsed.error : null);
+    if (err) streamErrorType = String(err.type || err.code || "stream_error").slice(0, 60);
+  };
+  // Passthrough streams aren't parsed into accumulatedContent for every format
+  // (Claude/Responses events), so count the non-heartbeat data chunks instead.
+  let passthroughContentChunks = 0;
+  const isNoiseChunk = (p) => !p || p.type === "ping" || p.type === "keepalive";
   let accumulatedContent = "";
   let accumulatedThinking = "";
   let ttftAt = null;
@@ -117,7 +129,9 @@ export function createSSEStream(options = {}) {
     if (onStreamComplete) {
       onStreamComplete({
         content: accumulatedContent,
-        thinking: accumulatedThinking
+        thinking: accumulatedThinking,
+        errorType: streamErrorType,
+        produced: totalContentLength > 0 || sseEmittedCount > 0 || passthroughContentChunks > 0,
       }, finalUsage, ttftAt);
     }
     tierAudit?.finish();
@@ -175,6 +189,8 @@ export function createSSEStream(options = {}) {
             try {
               let parsed = JSON.parse(trimmed.slice(5).trim());
               tierAudit?.observe(parsed);
+              noteStreamError(parsed);
+              if (!isNoiseChunk(parsed)) passthroughContentChunks++;
 
               const idFixed = fixInvalidId(parsed);
 
@@ -300,6 +316,7 @@ export function createSSEStream(options = {}) {
         const parsed = parseSSELine(trimmed, targetFormat);
         if (!parsed) continue;
         tierAudit?.observe(parsed);
+        noteStreamError(parsed);
 
         // Responses API same-format passthrough: preserve event framing + track terminal state
         const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;

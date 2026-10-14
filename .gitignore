@@ -90,6 +90,7 @@ graphify-out/*
 # Kiro local workspace state
 .kiro/
 9router-*
+!skills/9router-*/
 
 # Local sensitive / temp files
 .engine-token.txt

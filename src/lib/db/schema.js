@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -154,6 +154,51 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_provider ON requestDetails(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
+    ],
+  },
+  // Ops API tokens (/api/ops/*, the 9r CLI). Only a SHA-256 of the token is
+  // stored; the plaintext is shown once at creation.
+  opsTokens: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      name: "TEXT NOT NULL",
+      tokenHash: "TEXT UNIQUE NOT NULL",
+      prefix: "TEXT NOT NULL",
+      scope: "TEXT NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      expiresAt: "TEXT",
+      revokedAt: "TEXT",
+      lastUsedAt: "TEXT",
+      lastUsedIp: "TEXT",
+    },
+    indexes: ["CREATE INDEX IF NOT EXISTS idx_ot_hash ON opsTokens(tokenHash)"],
+  },
+  // Ops health/latency metrics, no request or response content. Two kinds:
+  // "request" = what the client got from a /v1 call (model = requested model
+  // or combo); "attempt" = one upstream call on one account. Pruned to
+  // REQUEST_METRICS_RETENTION_DAYS.
+  requestMetrics: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      ts: "INTEGER NOT NULL",
+      kind: "TEXT NOT NULL",
+      provider: "TEXT",
+      model: "TEXT",
+      connectionId: "TEXT",
+      keyName: "TEXT",
+      endpoint: "TEXT",
+      stream: "INTEGER",
+      status: "INTEGER",
+      outcome: "TEXT",
+      errorType: "TEXT",
+      ttftMs: "INTEGER",
+      totalMs: "INTEGER",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_rm_kind_ts ON requestMetrics(kind, ts)",
+      "CREATE INDEX IF NOT EXISTS idx_rm_provider_ts ON requestMetrics(provider, ts)",
+      "CREATE INDEX IF NOT EXISTS idx_rm_conn_ts ON requestMetrics(connectionId, ts)",
+      "CREATE INDEX IF NOT EXISTS idx_rm_ts ON requestMetrics(ts)",
     ],
   },
 };
