@@ -25,7 +25,9 @@
  *    downstream by streamHandler's STREAM_STALL_TIMEOUT_MS.
  */
 
-const DEFAULT_TIMEOUT_MS = 8000;
+import { COMBO_PROBE_TIMEOUT_MS } from "../config/runtimeConfig.js";
+
+const DEFAULT_TIMEOUT_MS = COMBO_PROBE_TIMEOUT_MS;
 
 // Bytes that count as "no content yet" on an SSE stream. We err on the side of
 // classifying ambiguous bytes as content (false-positive succeeded) rather
@@ -88,11 +90,13 @@ function isNoiseSseChunk(text) {
  *
  * @param {Response} response - The upstream response (must have a readable body).
  * @param {object} [opts]
- * @param {number} [opts.timeoutMs=8000] - Max ms to wait for first content chunk.
+ * @param {number} [opts.timeoutMs=COMBO_PROBE_TIMEOUT_MS] - Max ms to wait for first content chunk.
  * @param {(text: string) => boolean} [opts.isNoise] - Custom noise classifier.
- * @returns {Promise<{ ok: boolean, reason?: string, wrapped?: Response }>}
+ * @param {AbortSignal} [opts.signal] - Stop probing (and cancel the upstream) when aborted.
+ * @returns {Promise<{ ok: boolean, reason?: string, wrapped?: Response, bytes?: number, elapsedMs?: number }>}
  *   - ok=true with wrapped Response (re-assembled, safe to forward to client)
- *   - ok=false with reason: "timeout" | "empty" | "no-body" | "error"
+ *   - ok=false with reason: "timeout" | "empty" | "no-body" | "aborted" | "error"
+ *     plus bytes seen and elapsedMs, so a timeout shows silence vs heartbeats only"
  */
 export async function probeFirstContent(response, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -108,6 +112,27 @@ export async function probeFirstContent(response, opts = {}) {
   let collectedText = "";               // decoded so far (for noise check)
   let timeoutHandle = null;
   let timedOut = false;
+  const startedAt = Date.now();
+  const failed = (reason) => ({
+    ok: false, reason,
+    bytes: collected.reduce((n, c) => n + c.byteLength, 0),
+    elapsedMs: Date.now() - startedAt,
+  });
+
+  const signal = opts.signal;
+  if (signal?.aborted) {
+    reader.cancel("client-aborted").catch(() => {});
+    return failed("aborted");
+  }
+  let onAbort = null;
+  const abortPromise = new Promise((resolve) => {
+    if (!signal) return;
+    onAbort = () => {
+      reader.cancel("client-aborted").catch(() => {});
+      resolve({ done: true, value: undefined, __aborted: true });
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 
   const timeoutPromise = new Promise((resolve) => {
     timeoutHandle = setTimeout(() => {
@@ -120,20 +145,20 @@ export async function probeFirstContent(response, opts = {}) {
 
   try {
     while (true) {
-      const { done, value, __timeout } = await Promise.race([
+      const { done, value, __timeout, __aborted } = await Promise.race([
         reader.read().then(r => ({ ...r })),
         timeoutPromise,
+        abortPromise,
       ]);
 
-      if (__timeout) {
-        return { ok: false, reason: "timeout" };
-      }
+      if (__aborted) return failed("aborted");
+      if (__timeout) return failed("timeout");
 
       if (done) {
         // Stream ended during probe — no more bytes will come. If what we did
         // collect was all-noise (or empty), this is a fallback case.
         if (!collectedText || isNoise(collectedText)) {
-          return { ok: false, reason: "empty" };
+          return failed("empty");
         }
         // Edge case: stream ended cleanly with real content already buffered.
         // Re-assemble and forward (the downstream pipe will see EOF immediately).
@@ -161,9 +186,10 @@ export async function probeFirstContent(response, opts = {}) {
       }
     }
   } catch (err) {
-    return { ok: false, reason: `error:${err?.message || String(err)}` };
+    return failed(`error:${err?.message || String(err)}`);
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (onAbort) signal.removeEventListener("abort", onAbort);
   }
 }
 

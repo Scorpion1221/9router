@@ -60,7 +60,7 @@ export function stripContinuityFields(body) {
   return body;
 }
 
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides, clientSignal }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
@@ -337,6 +337,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
   const executor = getExecutor(provider);
+  // Client already gone (a listener added after the abort would never fire).
+  if (clientSignal?.aborted) return createErrorResult(499, "Client closed request");
   trackPendingRequest(model, provider, connectionId, true);
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
 
@@ -351,6 +353,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     onError: () => trackPendingRequest(model, provider, connectionId, false),
     log, provider, model, reqTag
   });
+
+  // Client gone before a stream is handed off: cancel the upstream call. The abort
+  // carries no reason on purpose, so every executor surfaces a plain AbortError
+  // (→ 499, no account penalty). Removed at stream hand-off, where the
+  // disconnect-aware stream takes over cancellation.
+  const onClientAbort = () => streamController.abort();
+  clientSignal?.addEventListener("abort", onClientAbort, { once: true });
 
   const proxyOptions = {
     connectionProxyEnabled: credentials?.providerSpecificData?.connectionProxyEnabled === true,
@@ -414,21 +423,23 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
+    // A cancelled fetch rejects with the abort reason, which isn't always an AbortError.
+    const aborted = error.name === "AbortError" || !!streamController.signal?.aborted;
     trackPendingRequest(model, provider, connectionId, false, true);
-    appendRequestLog({ model, provider, connectionId, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
+    appendRequestLog({ model, provider, connectionId, status: `FAILED ${aborted ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
       request: extractRequestConfig(body, stream),
       providerRequest: translatedBody || null,
-      response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
+      response: { error: error.message || String(error), status: aborted ? 499 : 502, thinking: null },
       pxpipe: pxpipeSummary,
       status: "error"
     })).catch(() => { });
 
-    if (error.name === "AbortError") {
-      streamController.handleError(error);
+    if (aborted) {
+      streamController.handleError(error.name === "AbortError" ? error : Object.assign(new Error("Request aborted"), { name: "AbortError" }));
       return createErrorResult(499, "Request aborted");
     }
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -437,6 +448,17 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
   }
+
+  // Client gone while the executor was answering (some executors turn the abort
+  // into a synthetic 5xx): report it as the abort it is, not a provider error.
+  const clientAbortResult = () => {
+    trackPendingRequest(model, provider, connectionId, false);
+    appendRequestLog({ model, provider, connectionId, status: "FAILED 499" }).catch(() => { });
+    streamController.handleError(Object.assign(new Error("Request aborted"), { name: "AbortError" }));
+    providerResponse?.body?.cancel?.().catch(() => { });
+    return createErrorResult(499, "Request aborted");
+  };
+  if (streamController.signal?.aborted) return clientAbortResult();
 
   // Handle 401/403 - try token refresh (skip for noAuth providers)
   if (!executor.noAuth && (providerResponse.status === HTTP_STATUS.UNAUTHORIZED || providerResponse.status === HTTP_STATUS.FORBIDDEN)) {
@@ -487,6 +509,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
   }
 
+  if (streamController.signal?.aborted) return clientAbortResult();
+
   // Provider returned error
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
@@ -520,14 +544,27 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // streams upstream (openaiToOpenAIResponsesRequest pins stream:true), so a
   // non-stream OpenAI/native client behind a Responses upstream must also take
   // this path — handleForcedSSEToJson returns null when the body is not SSE.
+  // Whole-body reads below: a client abort mid-read rejects the read (or turns
+  // into a parse error) — answer 499 instead of throwing or blaming the provider.
+  const readBody = async (fn) => {
+    try {
+      const result = await fn();
+      if (streamController.signal?.aborted) return createErrorResult(499, "Request aborted");
+      return result;
+    } catch (error) {
+      if (!streamController.signal?.aborted) throw error;
+      return createErrorResult(499, "Request aborted");
+    }
+  };
+
   if (!clientRequestedStreaming && (providerRequiresStreaming || providerResponseFormat === FORMATS.OPENAI_RESPONSES)) {
-    const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, customToolNames, namespaceTools, toolNameMap, trackDone, appendLog });
+    const result = await readBody(() => handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, customToolNames, namespaceTools, toolNameMap, trackDone, appendLog }));
     if (result) { streamController.handleComplete(); return result; }
   }
 
   // True non-streaming response
   if (!stream) {
-    const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, reqLogger, toolNameMap, customToolNames, namespaceTools, trackDone, appendLog });
+    const result = await readBody(() => handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, reqLogger, toolNameMap, customToolNames, namespaceTools, trackDone, appendLog }));
     streamController.handleComplete();
     return result;
   }
@@ -539,12 +576,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const respCType = providerResponse.headers.get("content-type") || "";
   if (!respCType.includes("text/event-stream") && respCType.includes("application/json")) {
     log?.debug?.("FORMAT", `Upstream returned ${respCType} despite stream=true — falling back to JSON`);
-    const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, reqLogger, toolNameMap, customToolNames, namespaceTools, trackDone, appendLog });
+    const result = await readBody(() => handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, reqLogger, toolNameMap, customToolNames, namespaceTools, trackDone, appendLog }));
     streamController.handleComplete();
     return result;
   }
 
   const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
+  clientSignal?.removeEventListener("abort", onClientAbort);
   return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, namespaceTools, streamController, onStreamComplete, streamDetailId, credentials });
 }
 

@@ -143,7 +143,8 @@ export async function handleChat(request, clientRawRequest = null) {
       log,
       comboName: modelStr,
       comboStrategy,
-      comboStickyLimit
+      comboStickyLimit,
+      signal: request?.signal
     });
   }
 
@@ -162,7 +163,8 @@ export async function handleChat(request, clientRawRequest = null) {
       ),
       log,
       comboName: modelStr,
-      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
+      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings),
+      signal: request?.signal
     });
   }
 
@@ -223,7 +225,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         log,
         comboName: modelStr,
         comboStrategy,
-        comboStickyLimit
+        comboStickyLimit,
+        signal: request?.signal
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
@@ -237,6 +240,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
+  // Client disconnect: stop walking accounts and don't blame the account for it.
+  const clientSignal = request?.signal;
+  const clientGone = () => {
+    log.info("CHAT", `client closed → stop ${provider}/${model}`);
+    return errorResponse(499, "Client closed request");
+  };
+
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
   let lastError = null;
@@ -244,6 +254,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
+    if (clientSignal?.aborted) return clientGone();
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
 
     // All accounts unavailable
@@ -312,10 +323,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
-      // Per-provider user overrides (custom headers / connect timeout) from settings
+      // Per-provider user overrides (custom headers) from settings
       providerOverrides: (chatSettings.providerOverrides || {})[provider] || null,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
+      clientSignal,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           ...newCreds,
@@ -329,6 +341,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         clearAntigravityStrikes(credentials.connectionId, model);
       }
     });
+
+    // Checked before any account bookkeeping: an abort mid-body surfaces as a 502
+    // that would otherwise lock a healthy account and move on to the next one.
+    if (clientSignal?.aborted) {
+      result.response?.body?.cancel?.().catch(() => { });
+      return clientGone();
+    }
 
     if (result.success) return result.response;
 

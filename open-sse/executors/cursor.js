@@ -517,25 +517,32 @@ export class CursorExecutor extends BaseExecutor {
       wake({ value: undefined, done: true });
     });
 
-    if (signal) {
-      const onAbort = () => {
-        fail(new Error("Request aborted"));
-        close();
-      };
-      if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort, { once: true });
-    }
-
+    let rejectHeaders = null;
     const responseHeaders = new Promise((resolve, reject) => {
+      rejectHeaders = reject;
       const onEarlyError = (error) => reject(error);
       client.once("error", onEarlyError);
       req.once("error", onEarlyError);
       req.once("response", (hdrs) => {
         client.off("error", onEarlyError);
         req.off("error", onEarlyError);
+        rejectHeaders = null;
         resolve(hdrs);
       });
     });
+
+    if (signal) {
+      const onAbort = () => {
+        const abortError = Object.assign(new Error("Request aborted"), { name: "AbortError" });
+        fail(abortError);
+        // close() destroys without an error, so nothing else would settle a
+        // header wait that is still pending.
+        rejectHeaders?.(abortError);
+        close();
+      };
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     return {
       responseHeaders,
@@ -584,6 +591,7 @@ export class CursorExecutor extends BaseExecutor {
       responseHeaders = await session.responseHeaders;
     } catch (error) {
       session.close();
+      if (error.name === "AbortError") throw error;
       throw new Error(`Cursor AgentService request failed: ${error.message}`);
     }
 
@@ -855,6 +863,7 @@ export class CursorExecutor extends BaseExecutor {
       try {
         return await this.executeAgent({ model, body, stream, credentials, signal, log });
       } catch (error) {
+        if (error.name === "AbortError" || signal?.aborted) throw error;
         return {
           response: new Response(JSON.stringify({
             error: { message: error.message, type: "connection_error", code: "" },

@@ -3,7 +3,7 @@
  */
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
-import { unavailableResponse } from "../utils/error.js";
+import { unavailableResponse, errorResponse } from "../utils/error.js";
 import { probeFirstContent, isStreamingSseResponse } from "../utils/streamProbe.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
@@ -280,10 +280,11 @@ export function getComboModelsFromData(modelStr, combosData) {
  *   peek the first non-noise chunk before committing. Empty / aborted streams
  *   fall back to the next combo model. Set false to restore legacy behavior
  *   (treat any 200 as success). Non-SSE responses are never probed.
- * @param {number} [options.probeTimeoutMs] - Override first-byte probe timeout (default 8000ms).
+ * @param {number} [options.probeTimeoutMs] - Override first-byte probe timeout (default COMBO_PROBE_TIMEOUT_MS).
+ * @param {AbortSignal} [options.signal] - Client request signal: once aborted, stop trying models.
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, probeStreamFirstByte = true, probeTimeoutMs, autoSwitch = true }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, probeStreamFirstByte = true, probeTimeoutMs, autoSwitch = true, signal }) {
   // Apply rotation strategy if enabled
   let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
 
@@ -302,8 +303,13 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   let lastError = null;
   let earliestRetryAfter = null;
   let lastStatus = null;
+  const clientGone = () => {
+    log.info("COMBO", `client closed → stop combo "${comboName}"`);
+    return errorResponse(499, "Client closed request");
+  };
 
   for (let i = 0; i < rotatedModels.length; i++) {
+    if (signal?.aborted) return clientGone();
     const modelStr = rotatedModels[i];
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
@@ -316,7 +322,11 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // empty body and combo would have already moved on.
       if (result.ok) {
         if (probeStreamFirstByte && isStreamingSseResponse(result)) {
-          const probe = await probeFirstContent(result, probeTimeoutMs ? { timeoutMs: probeTimeoutMs } : undefined);
+          const probe = await probeFirstContent(result, { ...(probeTimeoutMs ? { timeoutMs: probeTimeoutMs } : {}), signal });
+          if (signal?.aborted) {
+            if (probe.ok) probe.wrapped.body?.cancel?.().catch(() => { });
+            return clientGone();
+          }
           if (probe.ok) {
             log.info("COMBO", `Model ${modelStr} succeeded`);
             return probe.wrapped;
@@ -327,7 +337,8 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
           // upstream returned 200, the failure is a stream-level abort.
           lastError = `stream produced no content before first-byte deadline (${probe.reason})`;
           if (!lastStatus) lastStatus = 502;
-          log.warn("COMBO", `Model ${modelStr} 200 but stream empty (${probe.reason}), trying next`);
+          const seen = probe.elapsedMs != null ? ` after ${probe.elapsedMs}ms, ${probe.bytes}B` : "";
+          log.warn("COMBO", `Model ${modelStr} 200 but stream empty (${probe.reason}${seen}), trying next`);
           continue;
         }
         log.info("COMBO", `Model ${modelStr} succeeded`);
@@ -370,6 +381,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
           (result.status === 503 || result.status === 502 || result.status === 504)) {
         log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
         await new Promise(r => setTimeout(r, cooldownMs));
+        if (signal?.aborted) return clientGone();
       }
 
       // Fallback to next model

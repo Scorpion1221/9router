@@ -58,6 +58,18 @@ export const STREAM_FIRST_CHUNK_TIMEOUT_MS = envMs("STREAM_FIRST_CHUNK_TIMEOUT_M
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
 
+// stream:false upstreams only send headers once the whole generation is done, so
+// they get a longer header budget. Kept under undici's built-in 300s headersTimeout
+// (no dispatcher here overrides it) and under Claude Code's ~340s client timeout.
+// Env: FETCH_NONSTREAM_TIMEOUT_MS.
+export const FETCH_NONSTREAM_TIMEOUT_MS = Math.min(envMs("FETCH_NONSTREAM_TIMEOUT_MS", 280 * 1000), 295 * 1000);
+
+// Combo first-content probe: how long to wait after an upstream's 200 for the first
+// non-heartbeat SSE frame before falling through to the next combo model. Long-context
+// prefill routinely takes well over 8s. Capped below the stall timeout (and so below
+// setTimeout's overflow limit). Env: COMBO_PROBE_TIMEOUT_MS.
+export const COMBO_PROBE_TIMEOUT_MS = Math.min(envMs("COMBO_PROBE_TIMEOUT_MS", 60 * 1000), STREAM_STALL_TIMEOUT_MS);
+
 // Gemini native TTS fetch timeout: abort if Google does not return response headers in time.
 export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS", 45 * 1000);
 

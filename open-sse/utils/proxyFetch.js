@@ -284,8 +284,23 @@ async function createBypassRequest(parsedUrl, realIP, options) {
   const https = httpsModule.default ?? httpsModule;
   const net = netModule.default ?? netModule;
 
+  const signal = options.signal;
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
+    let req = null;
+    // Honor the caller's signal like fetch does: cancel the upstream request
+    // (client gone, or the executor's header timeout) instead of letting it
+    // run, and keep doing so while the body streams.
+    const onAbort = () => {
+      const reason = signal.reason ?? new DOMException("Aborted", "AbortError");
+      req?.destroy(reason);
+      socket.destroy(reason);
+      reject(reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    socket.once("close", () => signal?.removeEventListener("abort", onAbort));
 
     socket.connect(HTTPS_PORT, realIP, () => {
       const reqOptions = {
@@ -305,7 +320,7 @@ async function createBypassRequest(parsedUrl, realIP, options) {
         },
       };
 
-      const req = https.request(reqOptions, (res) => {
+      req = https.request(reqOptions, (res) => {
         const response = {
           ok: res.statusCode >= HTTP_SUCCESS_MIN && res.statusCode < HTTP_SUCCESS_MAX,
           status: res.statusCode,
@@ -362,6 +377,8 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       try {
         return await fetchWithTlsFallback(url, options, proxyUrl);
       } catch (proxyError) {
+        // A cancelled request is not a proxy failure: never resend it direct.
+        if (options.signal?.aborted) throw proxyError;
         if (proxyOptions?.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
@@ -374,6 +391,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       const realIP = await resolveRealIP(parsedUrl.hostname);
       if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
     } catch (error) {
+      if (options.signal?.aborted) throw error;
       console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
   }
@@ -382,6 +400,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     try {
       return await fetchWithTlsFallback(url, options, proxyUrl);
     } catch (proxyError) {
+      if (options.signal?.aborted) throw proxyError;
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
