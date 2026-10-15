@@ -103,9 +103,11 @@ export function rankResetFirst(connections, model, now = Date.now()) {
     if (assessment.policy.role === "reserve") reserve.push(entry);
     else normal.push(entry);
   });
-  // Earliest weekly reset first. Resets within the same hour count as a tie, so the
-  // dashboard order decides between them. Unknown resets go after known ones.
-  const bucket = (e) => e.assessment.weeklyResetAt === null ? Infinity : Math.floor(e.assessment.weeklyResetAt / HOUR_MS);
+  // Earliest weekly reset first. Resets fall on the hour, so accounts that reset at the
+  // same hour tie and the dashboard order decides. Rounded, not floored: the usage API
+  // reports 20:59:59.6 where headers say 21:00:00, and flooring split one reset into
+  // two hours (tying it with the 20:00 account). Unknown resets go after known ones.
+  const bucket = (e) => e.assessment.weeklyResetAt === null ? Infinity : Math.round(e.assessment.weeklyResetAt / HOUR_MS);
   normal.sort((a, b) => bucket(a) - bucket(b) || a.index - b.index);
   return {
     order: [

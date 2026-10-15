@@ -63,6 +63,15 @@ describe("reset-first", () => {
     expect(order.map((e) => e.conn.id)).toEqual(["a", "b", "x"]);
   });
 
+  it("does not tie an account resetting an hour later because of sub-second jitter", () => {
+    // Production: the usage API said 20:59:59.6 for a 21:00 reset; header said 20:00:00 for the other.
+    const hour = Math.ceil(Date.now() / 3600e3) * 3600e3 + 3 * DAY;
+    recordQuotaPoll("claude", "early", { fetchedAt: Date.now(), quotas: { "weekly (7d)": { used: 20, resetAt: new Date(hour).toISOString() } } });
+    recordQuotaPoll("claude", "late", { fetchedAt: Date.now(), quotas: { "weekly (7d)": { used: 70, resetAt: new Date(hour + 3600e3 - 400).toISOString() } } });
+    const { order } = rankResetFirst([conn("late", 1), conn("early", 2)], MODEL);
+    expect(order.map((e) => e.conn.id)).toEqual(["early", "late"]);
+  });
+
   it("skips exhausted windows and uses reserve accounts only when no normal one can", async () => {
     mocks.getProviderConnections.mockResolvedValue([conn("n1", 1), conn("r1", 2, { poolRole: "reserve" }), conn("n2", 3)]);
     quota("n1", { week: 0, weekResetIn: DAY });
