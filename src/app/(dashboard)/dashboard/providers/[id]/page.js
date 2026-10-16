@@ -1595,8 +1595,13 @@ export default function ProviderDetailPage() {
           onBulkToggle={async (on) => {
             for (const id of selectedConnectionIds) await handleUpdateConnectionStatus(id, on);
           }}
-          autoPingFor={AUTO_PING_SETTINGS_KEYS[providerId] ? (conn) => (conn.authType === "oauth" ? { on: autoPing.connections[conn.id] === true } : null) : null}
-          onToggleAutoPing={handleAutoPingConnection}
+          autoPingFor={AUTO_PING_SETTINGS_KEYS[providerId] ? (conn) => (conn.authType === "oauth" ? {
+            on: autoPing.connections[conn.id] === true || autoPing.schedules?.[conn.id]?.enabled === true,
+            reactiveOn: autoPing.connections[conn.id] === true,
+            scheduleOn: autoPing.schedules?.[conn.id]?.enabled === true,
+            scheduleSummary: getScheduleSlotLabels(autoPing.schedules?.[conn.id]).join(" / "),
+          } : null) : null}
+          onConfigureAutoPing={(conn) => setScheduleConnection(conn)}
           proxyPools={proxyPools}
           onUpdateProxy={updateConnectionProxy}
           oneByOneResults={oneByOneResults}

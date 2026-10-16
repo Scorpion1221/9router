@@ -77,7 +77,7 @@ Tip.propTypes = { text: PropTypes.string, children: PropTypes.node, as: PropType
 export default function QuotaConnectionList({
   providerId, connections, strategyOverride, onStrategyChange, isSelected, onToggleSelect, onSelectAll, onClearSelection,
   onReorder, onToggleActive, onEdit, onDelete, onTest, onTestAll, onStopTestAll, testAllRunning, testAllSummary,
-  onBulkDelete, onBulkProxy, onBulkToggle, autoPingFor, onToggleAutoPing, proxyPools, onUpdateProxy, oneByOneResults,
+  onBulkDelete, onBulkProxy, onBulkToggle, autoPingFor, onConfigureAutoPing, proxyPools, onUpdateProxy, oneByOneResults,
   onAdd, extraAddButtons,
 }) {
   const { view, error, reload } = usePoolView(providerId, connections, strategyOverride);
@@ -323,8 +323,10 @@ export default function QuotaConnectionList({
       <>
         {ap && (
           <Tip as="button" type="button" className={`ib${ap.on ? " on" : ""}`} aria-pressed={ap.on}
-            text={ap.on ? "Auto-ping on: starts the next 5h window the moment it resets" : "Auto-ping off: when the 5h quota runs out, send a tiny request at reset so a new window starts right away"}
-            onClick={() => onToggleAutoPing(a.id, !ap.on)}>
+            text={ap.on
+              ? `Auto-ping: ${[ap.reactiveOn && "on reset", ap.scheduleOn && `scheduled (${ap.scheduleSummary || "active"})`].filter(Boolean).join(" + ")} · click to configure`
+              : "Auto-ping off · click to start the 5h window on reset or on a schedule"}
+            onClick={() => onConfigureAutoPing(a.conn)}>
             <Ic name="bolt" />
           </Tip>
         )}
@@ -635,7 +637,7 @@ QuotaConnectionList.propTypes = {
   onBulkProxy: PropTypes.func.isRequired,
   onBulkToggle: PropTypes.func.isRequired,
   autoPingFor: PropTypes.func,
-  onToggleAutoPing: PropTypes.func,
+  onConfigureAutoPing: PropTypes.func,
   proxyPools: PropTypes.array,
   onUpdateProxy: PropTypes.func.isRequired,
   oneByOneResults: PropTypes.object,
