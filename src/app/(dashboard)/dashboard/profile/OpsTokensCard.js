@@ -7,7 +7,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 const SCOPE_HINT = {
   read: "status, quota, metrics",
   operate: "read + reversible account actions",
-  admin: "everything, incl. managing tokens",
+  admin: "everything, incl. editing combos and managing tokens",
 };
 
 // Ops tokens for /api/ops/* and the 9r CLI. The plaintext is shown once.

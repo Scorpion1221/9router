@@ -7,7 +7,7 @@
 1. In the dashboard: **Settings → Ops tokens → Create**. Pick a scope:
    - `read`: status, quota, metrics
    - `operate`: read plus reversible account actions
-   - `admin`: everything, including token management
+   - `admin`: everything, including combo edits and token management
 
    The token is shown once.
 2. Install and point it at the gateway:
@@ -30,7 +30,8 @@ Config lives in `~/.9r/config.json` (mode 600). `NINE_ROUTER_OPS_URL` and `NINE_
 | `9r quota <account>` | Remaining quota windows (5h / weekly / per-model) |
 | `9r errors --since 1h` | Failed upstream attempts by provider and error class |
 | `9r usage --by key,model --model opus-5` | Which client key calls which model |
-| `9r combos` / `9r keys` | Routing config (read-only). Keys are never shown, only names and restrictions |
+| `9r combos` | Combos: list, `show`, `create`, `set`, `add`, `remove`, `rename`, `delete` (writes need admin) |
+| `9r keys` | API key names and restrictions (read-only). Keys are never shown |
 | `9r check` | ok/warn/crit verdict. **Exit 0 ok, 1 warn, 2 crit, 3 could not check** |
 | `9r token list\|create\|revoke` | Manage ops tokens (admin) |
 
@@ -54,4 +55,5 @@ Metrics are kept for 7 days (`REQUEST_METRICS_RETENTION_DAYS`).
 - Only a SHA-256 of each token is stored.
 - Failed attempts lock the client IP out progressively, the same way as the dashboard login.
 - `/api/ops/*` ignores cookies, so CSRF doesn't apply.
+- Combo writes need an `admin` token: a restricted API key that allows a combo can call every member, so editing members changes what those keys reach. Every write is logged with the token name, and `rename`/`delete` warn about keys that list the combo.
 - Responses use an allowlist. OAuth tokens, refresh tokens, upstream API keys and inference keys are never returned.

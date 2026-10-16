@@ -236,3 +236,94 @@ describe("selection policy (reset-first)", () => {
     expect((await (await poolRoute()).GET(req("/api/ops/quota", readToken))).status).toBe(400);
   });
 });
+
+describe("combo writes", () => {
+  const listRoute = () => import("../../src/app/api/ops/combos/route.js");
+  const oneRoute = () => import("../../src/app/api/ops/combos/[id]/route.js");
+  const ctx = (id) => ({ params: Promise.resolve({ id }) });
+  let operateToken;
+  beforeAll(async () => {
+    operateToken = (await repo.createOpsToken({ name: "combo-operator", scope: "operate" })).token;
+  });
+  const create = async (token, body) => json(await (await listRoute()).POST(req("/api/ops/combos", token, { method: "POST", body })));
+  const patch = async (id, token, body) => json(await (await oneRoute()).PATCH(req(`/api/ops/combos/${id}`, token, { method: "PATCH", body }), ctx(id)));
+  const del = async (id, token) => json(await (await oneRoute()).DELETE(req(`/api/ops/combos/${id}`, token, { method: "DELETE" }), ctx(id)));
+  const show = async (id, token) => json(await (await oneRoute()).GET(req(`/api/ops/combos/${id}`, token), ctx(id)));
+
+  it("needs admin for every write; read can list and show", async () => {
+    expect((await create(readToken, { name: "c-scope", models: ["cc/claude-opus-5-5"] })).status).toBe(403);
+    expect((await create(operateToken, { name: "c-scope", models: ["cc/claude-opus-5-5"] })).status).toBe(403);
+    const made = await create(adminToken, { name: "c-scope", models: ["cc/claude-opus-5-5"] });
+    expect(made.status).toBe(200);
+    expect(made.body.combo).toMatchObject({ name: "c-scope", kind: "llm", strategy: "fallback", models: ["cc/claude-opus-5-5"] });
+    expect((await patch("c-scope", operateToken, { models: [] })).status).toBe(403);
+    expect((await del("c-scope", operateToken)).status).toBe(403);
+    const list = await json(await (await listRoute()).GET(req("/api/ops/combos", readToken)));
+    expect(list.body.combos.map((c) => c.name)).toContain("c-scope");
+    expect((await show("c-scope", readToken)).body.combo).toMatchObject({ name: "c-scope", keys: [] });
+  });
+
+  it("validates names, models, kind, strategy and unknown fields", async () => {
+    expect((await create(adminToken, { name: "bad name", models: [] })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-v", models: "cc/x" })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-v", models: ["cc/a b"] })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-v", models: ["cc/a", "cc/a"] })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-v", models: ["c-v"] })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-v", models: [], kind: "video" })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-v", models: [], strategy: "random" })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-v", models: [], id: "x" })).status).toBe(400);
+    expect((await create(adminToken, { name: "c-scope", models: [] })).status).toBe(409);
+    expect((await patch("c-scope", adminToken, {})).status).toBe(400);
+    expect((await patch("c-scope", adminToken, { createdAt: "x" })).status).toBe(400);
+    expect((await patch("no-such-combo", adminToken, { models: [] })).status).toBe(404);
+  });
+
+  it("refuses a chain that loops back through a nested combo", async () => {
+    await create(adminToken, { name: "c-outer", models: ["cc/claude-opus-5-5"] });
+    await create(adminToken, { name: "c-inner", models: ["c-outer"] });
+    const res = await patch("c-outer", adminToken, { models: ["c-inner"] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/include itself/);
+  });
+
+  it("stores strategy like the dashboard and moves it on rename", async () => {
+    const { getSettings } = await import("../../src/lib/db/repos/settingsRepo.js");
+    const made = await create(adminToken, { name: "c-rr", models: ["cc/a", "cc/b"], strategy: "round-robin" });
+    expect(made.body.combo.strategy).toBe("round-robin");
+    expect((await getSettings()).comboStrategies["c-rr"]).toEqual({ fallbackStrategy: "round-robin" });
+
+    const renamed = await patch(made.body.combo.id, adminToken, { name: "c-rr2" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.changed).toEqual({ name: { from: "c-rr", to: "c-rr2" } });
+    const strategies = (await getSettings()).comboStrategies;
+    expect(strategies["c-rr"]).toBeUndefined();
+    expect(strategies["c-rr2"]).toEqual({ fallbackStrategy: "round-robin" });
+
+    const back = await patch("c-rr2", adminToken, { strategy: "fallback", models: ["cc/b", "cc/a"] });
+    expect(Object.keys(back.body.changed).sort()).toEqual(["models", "strategy"]);
+    expect((await getSettings()).comboStrategies["c-rr2"]).toBeUndefined();
+    expect((await patch("c-rr2", adminToken, { models: ["cc/b", "cc/a"] })).body.changed).toEqual({});
+  });
+
+  it("deletes idempotently, prunes the strategy and warns about keys that list it", async () => {
+    const { getSettings } = await import("../../src/lib/db/repos/settingsRepo.js");
+    const { createApiKey, updateApiKey } = await import("../../src/lib/db/repos/apiKeysRepo.js");
+    await create(adminToken, { name: "c-del", models: ["cc/a"], strategy: "fusion" });
+    const key = await createApiKey("client-x", "machine-test");
+    await updateApiKey(key.id, { access: { restricted: true, allow: ["C-DEL"] } });
+
+    const shown = await show("c-del", readToken);
+    expect(shown.body.combo.keys).toEqual(["client-x"]);
+    expect(JSON.stringify(shown.body)).not.toContain(key.key);
+
+    const gone = await del("c-del", adminToken);
+    expect(gone.status).toBe(200);
+    expect(gone.body).toMatchObject({ deleted: "c-del", alreadyGone: false });
+    expect(gone.body.warnings[0]).toMatch(/client-x/);
+    expect((await getSettings()).comboStrategies["c-del"]).toBeUndefined();
+    expect((await show("c-del", readToken)).status).toBe(404);
+
+    const again = await del("c-del", adminToken);
+    expect(again).toMatchObject({ status: 200, body: { deleted: null, alreadyGone: true } });
+  });
+});

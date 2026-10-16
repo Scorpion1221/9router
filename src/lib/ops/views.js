@@ -2,9 +2,7 @@
 // fields: provider connections carry OAuth tokens, refresh tokens and upstream
 // API keys in their data blob, and none of it may leave the server.
 import { getProviderConnections, getProviderConnectionById } from "@/lib/db/repos/connectionsRepo.js";
-import { getCombos } from "@/lib/db/repos/combosRepo.js";
 import { getApiKeys } from "@/lib/db/repos/apiKeysRepo.js";
-import { getSettings } from "@/lib/db/repos/settingsRepo.js";
 import { getRequestMetricsSummary, getLastOkByConnection, REQUEST_METRICS_RETENTION_DAYS } from "@/lib/db/repos/requestMetricsRepo.js";
 import { MODEL_LOCK_PREFIX } from "open-sse/services/accountFallback.js";
 import { opsError } from "./auth.js";
@@ -98,16 +96,6 @@ export async function getAccount(id) {
   const c = await getProviderConnectionById(id);
   if (!c) return null;
   return c;
-}
-
-export async function listCombos() {
-  const [combos, settings] = await Promise.all([getCombos(), getSettings()]);
-  const strategies = settings.comboStrategies || {};
-  return combos.map((c) => ({
-    name: c.name,
-    strategy: strategies[c.name]?.fallbackStrategy || settings.comboStrategy || "fallback",
-    models: c.models,
-  }));
 }
 
 /** Inference key metadata. Never the key itself. */

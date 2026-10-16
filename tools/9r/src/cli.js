@@ -301,13 +301,118 @@ COMMANDS.usage = {
   },
 };
 
+const COMBO_SUBS = ["list", "show", "create", "set", "add", "remove", "rename", "delete"];
+const COMBO_SUB_FLAGS = {
+  list: [], show: [], rename: [], remove: [],
+  create: ["models", "strategy", "kind"],
+  set: ["models", "strategy", "kind"],
+  add: ["at"],
+  delete: ["yes"],
+};
+const COMBO_STRATEGIES = ["fallback", "round-robin", "fusion"];
+const splitModels = (raw) => String(raw || "").split(/[,\s]+/).map((m) => m.trim()).filter(Boolean);
+
+function comboRow(c) {
+  return { name: c.name, kind: c.kind, strategy: c.strategy, members: c.models.join(" → ") || "(empty)" };
+}
+
+function printCombo(c, extra = {}) {
+  out({ combo: c.name, kind: c.kind, strategy: c.strategy, models: c.models, ...extra });
+}
+
+function checkStrategy(v) {
+  if (v !== undefined && !COMBO_STRATEGIES.includes(v)) throw new CliError(`--strategy must be one of ${COMBO_STRATEGIES.join(", ")}`, { exitCode: 2 });
+}
+
+async function patchCombo(name, body) {
+  const res = await api(`/combos/${encodeURIComponent(name)}`, { method: "PATCH", body });
+  const changed = Object.entries(res.changed || {}).map(([k, v]) => `${k}: ${Array.isArray(v.from) ? v.from.join(",") || "(empty)" : v.from} → ${Array.isArray(v.to) ? v.to.join(",") || "(empty)" : v.to}`);
+  printCombo(res.combo, {
+    changed: changed.length ? changed : "no change (already set)",
+    ...(res.warnings?.length ? { warnings: res.warnings } : {}),
+  });
+  return 0;
+}
+
 COMMANDS.combos = {
-  flags: {},
-  help: "9r combos\nCombo names, strategy and member chain (fallback order).",
-  async run() {
-    const res = await api("/combos");
-    if (!res.combos.length) { out({ combos: "0 combos configured" }); return 0; }
-    out({ combos: res.combos.map((c) => ({ name: c.name, strategy: c.strategy, members: c.models.join(" → ") })) });
+  flags: { models: "value", strategy: "value", kind: "value", at: "value", yes: "bool" },
+  help: [
+    "9r combos [list]                                   all combos with strategy and members",
+    "9r combos show <name>                              one combo + API keys that allow it",
+    "9r combos create <name> --models a,b [--strategy fallback|round-robin|fusion] [--kind llm]",
+    "9r combos set <name> [--models a,b] [--strategy …] [--kind …]   replace fields",
+    "9r combos add <name> <model> [--at 1]              insert a member (default: last)",
+    "9r combos remove <name> <model>                    drop a member",
+    "9r combos rename <name> <new-name>",
+    "9r combos delete <name> --yes                      irreversible",
+    "Members are provider/model ids (cc/claude-opus-5-5) or other combo names. Order = fallback order.",
+    "Writes need an admin token (a restricted API key that lists a combo can call all its members).",
+    "Changes apply to the next request.",
+    "examples:",
+    "  9r combos create opus-fast --models cc/claude-opus-5-5,newapi-anthropic/claude-opus-4-7",
+    "  9r combos add claude-opus-5-5-combos cc/claude-sonnet-5-5 --at 2",
+    "  9r combos delete gpt-5.5-combos --yes",
+  ].join("\n"),
+  async run({ flags, positionals }) {
+    const [sub = "list", name, arg] = positionals;
+    if (!COMBO_SUBS.includes(sub)) throw new CliError(`unknown combos subcommand '${sub}'`, { help: [`9r combos ${COMBO_SUBS.join(" | ")}`, "9r combos --help"], exitCode: 2 });
+    const allowed = COMBO_SUB_FLAGS[sub];
+    const stray = Object.keys(flags).find((f) => !allowed.includes(f));
+    if (stray) throw new CliError(`unknown flag --${stray} for \`9r combos ${sub}\``, { help: [`valid flags for \`9r combos ${sub}\`: ${allowed.map((f) => `--${f}`).join(", ") || "(none)"} (--help always allowed)`], exitCode: 2 });
+    checkStrategy(flags.strategy);
+    if (sub !== "list" && !name) throw new CliError("combo name is required", { help: [`9r combos ${sub} <name> …`], exitCode: 2 });
+
+    if (sub === "list") {
+      const res = await api("/combos");
+      if (!res.combos.length) { out({ combos: "0 combos configured", help: ["Run `9r combos create <name> --models provider/model,…`"] }); return 0; }
+      out({ count: res.combos.length, combos: res.combos.map(comboRow), help: ["Run `9r combos show <name>` for one combo", "Run `9r combos add <name> <model>` to extend a chain"] });
+      return 0;
+    }
+    if (sub === "show") {
+      const res = await api(`/combos/${encodeURIComponent(name)}`);
+      printCombo(res.combo, { keys: res.combo.keys.length ? res.combo.keys : "no restricted key lists it" });
+      return 0;
+    }
+    if (sub === "create") {
+      const models = splitModels(flags.models);
+      if (!models.length) throw new CliError("--models is required (comma-separated provider/model ids)", { help: ["9r combos create <name> --models cc/claude-opus-5-5,cx/gpt-6-astra"], exitCode: 2 });
+      const res = await api("/combos", { method: "POST", body: { name, models, ...(flags.kind ? { kind: flags.kind } : {}), ...(flags.strategy ? { strategy: flags.strategy } : {}) } });
+      printCombo(res.combo, { help: [`Clients can call it now as model '${res.combo.name}'`] });
+      return 0;
+    }
+    if (sub === "set") {
+      const body = {};
+      if (flags.models !== undefined) body.models = splitModels(flags.models);
+      if (flags.strategy !== undefined) body.strategy = flags.strategy;
+      if (flags.kind !== undefined) body.kind = flags.kind;
+      if (!Object.keys(body).length) throw new CliError("nothing to set", { help: ["9r combos set <name> [--models a,b] [--strategy …] [--kind …]"], exitCode: 2 });
+      return patchCombo(name, body);
+    }
+    if (sub === "add" || sub === "remove") {
+      if (!arg) throw new CliError(`model is required: 9r combos ${sub} <name> <provider/model>`, { exitCode: 2 });
+      const cur = (await api(`/combos/${encodeURIComponent(name)}`)).combo;
+      let models = [...cur.models];
+      if (sub === "add") {
+        if (models.includes(arg)) { printCombo(cur, { changed: `no change ('${arg}' is already a member)` }); return 0; }
+        const at = flags.at === undefined ? models.length : Number(flags.at) - 1;
+        if (!Number.isInteger(at) || at < 0 || at > models.length) throw new CliError(`--at must be 1..${models.length + 1}`, { exitCode: 2 });
+        models.splice(at, 0, arg);
+      } else {
+        if (!models.includes(arg)) { printCombo(cur, { changed: `no change ('${arg}' is not a member)` }); return 0; }
+        models = models.filter((m) => m !== arg);
+      }
+      return patchCombo(cur.id, { models });
+    }
+    if (sub === "rename") {
+      if (!arg) throw new CliError("new name is required: 9r combos rename <name> <new-name>", { exitCode: 2 });
+      return patchCombo(name, { name: arg });
+    }
+    // delete
+    if (!flags.yes) throw new CliError(`deleting '${name}' is irreversible; re-run with --yes`, { help: [`9r combos show ${name}  (check which keys allow it first)`, `9r combos delete ${name} --yes`], exitCode: 2 });
+    const res = await api(`/combos/${encodeURIComponent(name)}`, { method: "DELETE" });
+    out(res.alreadyGone
+      ? { combos: `'${name}' does not exist (already gone, no-op)` }
+      : { deleted: res.deleted, ...(res.warnings?.length ? { warnings: res.warnings } : {}) });
     return 0;
   },
 };
@@ -436,7 +541,8 @@ function globalHelp() {
     "  9r quota <name>    remaining quota for one account (--provider claude: all + selection order)",
     "  9r errors          failed upstream attempts by provider and error class",
     "  9r usage           requests by model / key (--by key,model --model opus)",
-    "  9r combos | keys   routing config (read-only)",
+    "  9r combos …        list / show / create / set / add / remove / rename / delete combos",
+    "  9r keys            API key names and restrictions (read-only)",
     "  9r check           ok/warn/crit verdict for cron (exit 0/1/2)",
     "  9r token …         manage ops tokens (admin)",
     "  9r config …        endpoint + token",
