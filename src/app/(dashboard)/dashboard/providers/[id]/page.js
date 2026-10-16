@@ -20,6 +20,7 @@ import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
 import ConnectionRow from "./ConnectionRow";
 import SortableConnectionList, { saveConnectionOrder } from "./SortableConnectionList";
+import QuotaConnectionList from "./QuotaConnectionList";
 import ConnectionQuota from "./ConnectionQuota";
 import useConnectionQuotas, { supportsQuota } from "@/shared/hooks/useConnectionQuotas";
 
@@ -1020,7 +1021,55 @@ export default function ProviderDetailPage() {
 
   const isSelected = (connectionId) => selectedConnectionIds.includes(connectionId);
 
-  const connectionsList = (
+  const updateConnectionProxy = async (connectionId, proxyPoolId) => {
+    try {
+      const res = await fetch(`/api/providers/${connectionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proxyPoolId: proxyPoolId || null }),
+      });
+      if (res.ok) {
+        setConnections(prev => prev.map(c =>
+          c.id === connectionId
+            ? { ...c, providerSpecificData: { ...c.providerSpecificData, proxyPoolId: proxyPoolId || null } }
+            : c
+        ));
+      }
+    } catch (error) {
+      console.log("Error updating proxy:", error);
+    }
+  };
+
+  const testConnection = async (connectionId) => {
+    try {
+      await fetch(`/api/providers/${connectionId}/test`, { method: "POST" });
+    } catch (error) {
+      console.log("Error testing connection:", error);
+    }
+    await fetchConnections();
+  };
+
+  // Claude/Codex accounts carry live quota: list them in the order the gateway uses them.
+  const quotaRouted = RESET_FIRST_PROVIDERS.has(providerId) && isOAuth;
+
+  const connectionsList = quotaRouted ? (
+    <QuotaConnectionList
+      providerId={providerId}
+      connections={connections}
+      isSelected={isSelected}
+      onToggleSelect={toggleSelectConnection}
+      onReorder={handleReorder}
+      onToggleActive={handleUpdateConnectionStatus}
+      onEdit={(conn) => { setSelectedConnection(conn); setShowEditModal(true); }}
+      onDelete={handleDelete}
+      onTest={testConnection}
+      autoPingFor={AUTO_PING_SETTINGS_KEYS[providerId] ? (conn) => (conn.authType === "oauth" ? { on: autoPing.connections[conn.id] === true } : null) : null}
+      onToggleAutoPing={handleAutoPingConnection}
+      proxyPools={proxyPools}
+      onUpdateProxy={updateConnectionProxy}
+      oneByOneResults={oneByOneResults}
+    />
+  ) : (
     <SortableConnectionList
       connections={connections}
       onReorder={handleReorder}
