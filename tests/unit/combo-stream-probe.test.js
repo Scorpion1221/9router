@@ -98,7 +98,7 @@ describe("handleComboChat — stream-aware fallback", () => {
     const calls = [];
     const handleSingleModel = async (_body, modelStr) => {
       calls.push(modelStr);
-      return new Response(JSON.stringify({ id: "m1", choices: [] }), {
+      return new Response(JSON.stringify({ id: "m1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });

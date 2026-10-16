@@ -3,6 +3,34 @@
 ## Features
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
+# v0.5.104 (2026-10-15)
+
+## Features
+- **Gemini**: add Gemini 4 Argon (`gemini`/`vertex`, plus a `high` tier on Antigravity) — non-dismissible gemini-level thinking, 1M context, Vertex defaults to `global` location
+- **Usage**: Cursor IDE quota via DashboardService (spend + request buckets) (#4689)
+- **Cursor**: resolve Auto (Server Picks) to the account's default agent model (#4692)
+- **Quota**: anchored auto-ping schedule at fixed local times with timezone/DST support and schedule modal (#4848); unify mode selection into a 3-way toggle, default timezone to local, bring schedule config to the quota page
+- **Providers**: add Nous Research OAuth + free-tier provider
+- **UI**: model picker regex/negation search, Select/Deselect All, provider filtering, and per-provider wildcards
+
+## Fixes
+- **Nous**: add missing attribution tags to API-key requests through compatible Chat Completions connections, preserving caller tags and identities (#4745)
+- **Cursor**: recover long sessions from empty AgentService turns (#4690); hold strictProxy on the AgentService h2 path (#4696)
+- **OpenCode**: encode inverted timestamp in translated session IDs so non-OpenCode clients pass Zen free-tier checks (#4780); inject `reasoning_content` placeholder for Zen multi-turn chats (#4805); move free tier to `/inference/v1` with the v2 client fingerprint (#4842)
+- **OpenCode Zen**: use attested free-tier identity for `-free` models on keyed lane (#4784)
+- **OpenCode Go**: route `claude-haiku-5-5` to `/messages` with adaptive thinking (#4727); drop `response_format` for the deepseek family (relay rejects with a bare 400)
+- **Capabilities**: add missing OpenCode Free reasoning entries (space-bunny & co) so `reasoning_effort` stops being silently stripped; advertise PDF input for current Claude models (#4761)
+- **Combos**: fallback when a model returns HTTP 200 with zero usable content (#4750)
+- **Qoder**: surface add-on (free-credit promo) quota in the quota tracker (#4758)
+- **Translator**: return Claude messages for forced SSE JSON responses (#4789)
+- **Vertex**: honor API-key project/location for Gemini 4 Argon (#4821)
+- **GitHub**: route Copilot embeddings to `api.githubcopilot.com` (#4793)
+- **Codex**: drop retired gpt-5.5 from registry, image, and auto-ping; CLI preset default to `gpt-6.1-sol`
+- **Gemini**: drop sampling params and order functionResponse-last for Gemini 4 (#4802)
+- **Models**: expose no-auth free providers in `/v1/models`; prune custom models on node deletion
+- **Usage**: token fallback for `input_tokens` rows in 24h/today stats; stable key masking
+- **Dashboard**: unclip proxy dropdown and tooltips via body portal
+
 # v0.5.99 (2026-10-08)
 
 ## Features
@@ -10,6 +38,7 @@
 - **Antigravity**: add Claude Sonnet 5.5 and Opus 5.5 support with reasoning effort variants, pricing, and family quota routing
 - **Bedrock**: add Amazon Bedrock (`bedrock` and `bedrock-xai`) provider with static keys, AWS SSO profiles, native SigV4 signer, and shared EventStream decoder (#4157)
 - **Hermes**: per-profile configuration across API, Dashboard card, and CLI menu with bulk apply, scoped reset, and auxiliary roles (#4660)
+- **Hermes**: audio transcription via 9router — an "Audio STT" toggle in the card points the profile's `stt.openai.base_url` at `/v1/audio/transcriptions` with an STT-kind model picker (#4763)
 - **API Keys**: per-API-key access control — restrict keys to allowed combos and models via interactive modal
 - **ElevenLabs**: add Scribe speech-to-text support (#4537)
 - **Proxy Pools**: add Netlify serverless relay proxy pool with digest-deploy API and dashboard management modal
@@ -19,6 +48,7 @@
 - **Dashboard**: open 9Remote sidebar item directly to website
 
 ## Fixes
+- Avoid Headroom compression warnings caused by large unchanged tool schemas (#4809).
 - **Dashboard**: fix mobile layouts for API Keys card (alignment, code wrap), header breadcrumbs (overflow collision), model chips (full width, break-all), and Claude CLI settings
 - **Gemini**: do not treat properties map as schema node when tool parameter is named `properties` (#4620); rename `$ref` keys in `functionResponse` payloads
 - **Translator**: uniquify duplicate `tool_call_ids` for Gemini (#4532)

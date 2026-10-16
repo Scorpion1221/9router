@@ -1,5 +1,6 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
+import { getModelMeta } from "../config/providerModels.js";
 import { parseVertexSaJson, refreshVertexToken, refreshGoogleToken } from "../services/tokenRefresh.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
@@ -91,21 +92,26 @@ export class VertexExecutor extends BaseExecutor {
           "Add quota_project_id to your ADC JSON or set providerSpecificData.projectId."
         );
       }
-      // LLM defaults to `global` (recommended by Google for generateContent and what
-      // partner endpoints already use). Falls back to legacy `location` field for
-      // backwards compat with connections created before llmLocation existed.
+      // LLM location: per-service llmLocation, then the legacy shared `location`, then a
+      // global-only model's registry default (e.g. Argon), then `global` (Google's
+      // recommendation for generateContent and what partner endpoints already use).
       const location =
         credentials?.providerSpecificData?.llmLocation ||
         credentials?.providerSpecificData?.location ||
+        getModelMeta(this.provider, model)?.defaultLocation ||
         "global";
       let url = `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:${action}`;
       if (stream) url += "?alt=sse";
       return url;
     }
 
-    // Raw API key: use global publishers endpoint with ?key= param
+    // Raw API keys with an explicit project must honor its location (e.g. Argon on global).
+    // Keep the projectless endpoint for existing connections without a configured project.
     // ?alt=sse is required for proper SSE streaming (matches every other Gemini executor)
-    let url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:${action}`;
+    const location = credentials?.providerSpecificData?.location || "global";
+    let url = projectId
+      ? `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:${action}`
+      : `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:${action}`;
     if (stream) url += "?alt=sse";
     if (rawKey) url += stream ? `&key=${rawKey}` : `?key=${rawKey}`;
     return url;

@@ -9,7 +9,14 @@ vi.mock("@/lib/localDb", () => ({
 }));
 vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: db.disabled }));
 
+let FREE_PREFIXES = [];
+const notFree = (model) => !FREE_PREFIXES.some((p) => model.id.startsWith(`${p}/`));
 const { buildModelsList } = await import("@/app/api/v1/models/route.js");
+{
+  const { FREE_PROVIDERS } = await import("@/shared/constants/providers");
+  const { PROVIDER_ID_TO_ALIAS } = await import("@/shared/constants/models");
+  FREE_PREFIXES = Object.entries(FREE_PROVIDERS).filter(([, p]) => p?.noAuth).flatMap(([id]) => [id, PROVIDER_ID_TO_ALIAS[id]].filter(Boolean));
+}
 const originalFetch = global.fetch;
 
 const connection = (name, extra = {}) => ({
@@ -20,7 +27,8 @@ const connection = (name, extra = {}) => ({
   providerSpecificData: { baseUrl: `https://${name}.test/v1`, prefix: name, ...extra },
 });
 const response = (...ids) => ({ ok: true, json: async () => ({ data: ids.map((id) => ({ id })) }) });
-const ids = async () => (await buildModelsList(["llm"])).map((model) => model.id);
+// /v1/models also lists no-auth free providers (upstream v0.5.104); these tests cover configured ones.
+const ids = async () => (await buildModelsList(["llm"])).filter(notFree).map((model) => model.id);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -45,7 +53,7 @@ describe("compatible /v1/models discovery cache", () => {
     expect(global.fetch).toHaveBeenCalledWith("https://reuse.test/v1/models", expect.objectContaining({
       headers: expect.objectContaining({ "x-9r-internal-models-fetch": "1" }),
     }));
-    expect((await buildModelsList(["llm"], { skipDynamicFetch: true })).map((m) => m.id)).toEqual([]);
+    expect((await buildModelsList(["llm"], { skipDynamicFetch: true })).filter(notFree).map((m) => m.id)).toEqual([]);
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 

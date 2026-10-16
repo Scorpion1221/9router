@@ -11,8 +11,6 @@ const CODEX_272K_MODELS = [
   "gpt-5.6-terra-review",
   "gpt-5.6-luna",
   "gpt-5.6-luna-review",
-  "gpt-5.5",
-  "gpt-5.5-review",
 ];
 
 describe("Codex context window metadata", () => {
