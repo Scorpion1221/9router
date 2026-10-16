@@ -423,7 +423,7 @@ export default function ProviderDetailPage() {
     const sticky = strategy === "round-robin" ? (providerStickyLimit || "1") : providerStickyLimit;
     if (strategy === "round-robin" && !providerStickyLimit) setProviderStickyLimit("1");
     setProviderStrategy(strategy);
-    saveProviderStrategy(strategy, sticky);
+    return saveProviderStrategy(strategy, sticky);
   };
 
   const handleStickyLimitChange = (value) => {
@@ -1041,35 +1041,22 @@ export default function ProviderDetailPage() {
   };
 
   const testConnection = async (connectionId) => {
+    let valid = false;
     try {
-      await fetch(`/api/providers/${connectionId}/test`, { method: "POST" });
+      const res = await fetch(`/api/providers/${connectionId}/test`, { method: "POST" });
+      valid = !!(await res.json().catch(() => ({}))).valid;
     } catch (error) {
       console.log("Error testing connection:", error);
     }
     await fetchConnections();
+    return valid;
   };
 
-  // Claude/Codex accounts carry live quota: list them in the order the gateway uses them.
+  // Claude/Codex accounts carry live quota: their whole Connections card is the
+  // quota-routed list (gateway order, live windows, summary bar).
   const quotaRouted = RESET_FIRST_PROVIDERS.has(providerId) && isOAuth;
 
-  const connectionsList = quotaRouted ? (
-    <QuotaConnectionList
-      providerId={providerId}
-      connections={connections}
-      isSelected={isSelected}
-      onToggleSelect={toggleSelectConnection}
-      onReorder={handleReorder}
-      onToggleActive={handleUpdateConnectionStatus}
-      onEdit={(conn) => { setSelectedConnection(conn); setShowEditModal(true); }}
-      onDelete={handleDelete}
-      onTest={testConnection}
-      autoPingFor={AUTO_PING_SETTINGS_KEYS[providerId] ? (conn) => (conn.authType === "oauth" ? { on: autoPing.connections[conn.id] === true } : null) : null}
-      onToggleAutoPing={handleAutoPingConnection}
-      proxyPools={proxyPools}
-      onUpdateProxy={updateConnectionProxy}
-      oneByOneResults={oneByOneResults}
-    />
-  ) : (
+  const connectionsList = (
     <SortableConnectionList
       connections={connections}
       onReorder={handleReorder}
@@ -1574,6 +1561,42 @@ export default function ProviderDetailPage() {
       {/* Connections */}
       {isFreeNoAuth ? (
         <NoAuthProxyCard providerId={providerId} />
+      ) : quotaRouted && connections.length > 0 ? (
+        <QuotaConnectionList
+          providerId={providerId}
+          connections={connections}
+          strategyOverride={providerStrategy}
+          onStrategyChange={handleStrategySelect}
+          isSelected={isSelected}
+          onToggleSelect={toggleSelectConnection}
+          onSelectAll={toggleSelectAllConnections}
+          onClearSelection={clearSelection}
+          onReorder={handleReorder}
+          onToggleActive={handleUpdateConnectionStatus}
+          onEdit={(conn) => { setSelectedConnection(conn); setShowEditModal(true); }}
+          onDelete={handleDelete}
+          onTest={testConnection}
+          onTestAll={handleRunOneByOneTest}
+          onStopTestAll={handleStopOneByOneTest}
+          testAllRunning={oneByOneRunning}
+          testAllSummary={oneByOneSummary}
+          onBulkDelete={handleBulkDelete}
+          onBulkProxy={openBulkProxyModal}
+          onBulkToggle={async (on) => {
+            for (const id of selectedConnectionIds) await handleUpdateConnectionStatus(id, on);
+          }}
+          autoPingFor={AUTO_PING_SETTINGS_KEYS[providerId] ? (conn) => (conn.authType === "oauth" ? { on: autoPing.connections[conn.id] === true } : null) : null}
+          onToggleAutoPing={handleAutoPingConnection}
+          proxyPools={proxyPools}
+          onUpdateProxy={updateConnectionProxy}
+          oneByOneResults={oneByOneResults}
+          onAdd={triggerAddConnection}
+          extraAddButtons={providerId === "codex" ? (
+            <button className="btn btn-secondary" type="button" onClick={() => setShowBulkImportCodex(true)}>
+              <span className="ms material-symbols-outlined" aria-hidden="true">playlist_add</span>{translate("Bulk Add")}
+            </button>
+          ) : null}
+        />
       ) : (
         <Card>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

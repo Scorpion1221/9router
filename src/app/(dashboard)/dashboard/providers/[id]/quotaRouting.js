@@ -41,26 +41,6 @@ export function backAt(account) {
   return ts(account.lockedUntil) || ts(account.eligibleAt);
 }
 
-function modelName(window) {
-  const n = String(window).split(":")[1] || window;
-  return n.charAt(0).toUpperCase() + n.slice(1);
-}
-
-/** The empty window that explains why an account is out (its reset matches the lock). */
-function blockingWindow(account) {
-  const t = backAt(account);
-  const zero = [
-    account.windows?.["5h"] && { key: "5h", ...account.windows["5h"] },
-    account.windows?.["7d"] && { key: "7d", ...account.windows["7d"] },
-    ...(account.modelWindows || []).map((w) => ({ key: w.window, ...w })),
-  ].filter((w) => w && w.remainingPct != null && w.remainingPct <= 0);
-  if (!zero.length) return null;
-  if (t) zero.sort((x, y) => Math.abs((ts(x.resetAt) || 1e15) - t) - Math.abs((ts(y.resetAt) || 1e15) - t));
-  return zero[0];
-}
-
-const limitLabel = (key) => (key === "5h" ? "5h limit" : key === "7d" ? "Weekly limit" : `${modelName(key)} weekly limit`);
-
 /** Parse the stored upstream error ("[429]: {...}") into code / type / message. */
 export function parseUpstreamError(raw) {
   if (!raw) return null;
@@ -69,87 +49,72 @@ export function parseUpstreamError(raw) {
   return { code, type, raw };
 }
 
-function errorLabel(raw) {
+export const modelName = (key) => { const n = String(key).split(":")[1] || key; return n.charAt(0).toUpperCase() + n.slice(1); };
+export const winLabel = (key) => (key === "5h" ? "5h" : key === "7d" ? "Week" : `${modelName(key)} · week`);
+export const limitLabel = (key) => (key === "5h" ? "5h limit" : key === "7d" ? "Weekly limit" : `${modelName(key)} weekly limit`);
+export const windowWord = (key) => (key === "5h" ? "5h" : key === "7d" ? "weekly" : `${modelName(key)} weekly`);
+
+export function windowsOf(a) {
+  const out = [];
+  if (a.windows?.["5h"]) out.push({ key: "5h", ...a.windows["5h"] });
+  if (a.windows?.["7d"]) out.push({ key: "7d", ...a.windows["7d"] });
+  (a.modelWindows || []).forEach((m) => out.push({ key: m.window, ...m }));
+  return out;
+}
+
+// The empty window that explains why an account is out: its reset matches the lock.
+export function blocking(a) {
+  const t = backAt(a);
+  const zero = windowsOf(a).filter((w) => w.remainingPct != null && w.remainingPct <= 0);
+  if (!zero.length) return null;
+  if (t) zero.sort((x, y) => Math.abs((ts(x.resetAt) || 1e15) - t) - Math.abs((ts(y.resetAt) || 1e15) - t));
+  return zero[0];
+}
+
+export function errHuman(raw) {
   const e = parseUpstreamError(raw);
   if (!e) return "Unavailable";
   if (e.code === "429") return "Rate limited";
   if (e.code === "401" || e.code === "403") return "Auth failed";
   if (e.code?.startsWith("5")) return "Upstream error";
-  return "Unavailable";
+  return "Request failed";
 }
 
-/**
- * ONE status per account from the pool view.
- * tone: ok | warn | err | reserve | info | muted
- */
-export function accountStatus(account, { strategy, servingReserve = false, now = Date.now() } = {}) {
-  if (!account.active) return { tone: "muted", label: "Disabled", group: "off" };
-  const order = account.order;
-  if (order) {
-    if (order === "1") return { tone: "ok", label: "In use", live: true, group: "rotation" };
-    if (order.startsWith("R")) {
-      if (servingReserve && order === "R1") return { tone: "ok", label: "In use", live: true, group: "rotation" };
-      return { tone: "reserve", label: "Standby", group: "rotation" };
-    }
-    return { tone: "ok", label: order === "2" ? "Up next" : "Ready", group: "rotation" };
+// ONE status per account, derived from the gateway view.
+export function statusOf(a, { strategy, servingReserve, now }) {
+  if (!a.active) return { tone: "muted", label: "Disabled", group: "off", tip: "Disabled: the gateway never selects it" };
+  // Other strategies don't skip an account whose window is empty; it still can't serve.
+  const empty = strategy !== "reset-first" && a.state === "ready" ? blocking(a) : null;
+  if (empty) {
+    const r = ts(empty.resetAt);
+    return { tone: r && r - now < DAY ? "warn" : "err", label: limitLabel(empty.key), back: r, win: empty.key, group: "wait", tip: `Usage shows the ${windowWord(empty.key)} window at 0%; ${strategy} still tries it and gets a 429${r ? ` · resets ${formatFull(r)}` : ""}` };
   }
-  // Round robin shows no order; an account that is not locked is in rotation.
-  if (strategy === "round-robin" && account.state === "ready") return { tone: "ok", label: "Ready", group: "rotation" };
-  const t = backAt(account);
-  if (account.state === "below keep") return { tone: "info", label: `Holding ${account.keepPct}%`, back: t, group: "waiting" };
-  const win = blockingWindow(account);
+  if (a.order) {
+    if (a.order === "1") return { tone: "ok", cls: "use", label: "In use", group: "rot", tip: "The next request goes to this account" };
+    if (a.order.startsWith("R")) {
+      if (servingReserve && a.order === "R1") return { tone: "ok", cls: "use", label: "In use", group: "rot", tip: "No normal account can take requests, so the first reserve serves" };
+      return { tone: "rsv", label: "Standby", group: "rot", tip: `Reserve: takes traffic only when no normal account can${a.keepPct ? `; never goes below keep ${a.keepPct}%` : ""}` };
+    }
+    return { tone: "ok", label: a.order === "2" ? "Up next" : "Ready", group: "rot", tip: "Takes over when the accounts above run out" };
+  }
+  if (strategy !== "reset-first" && a.state === "ready") return { tone: "ok", label: "Ready", group: "rot", tip: "Usable" };
+  const t = backAt(a);
+  if (a.state === "below keep") return { tone: "info", label: `Holding ${a.keepPct}%`, back: t, group: "wait", tip: `Below its keep ${a.keepPct}%: skipped to preserve quota${t ? ` until ${formatFull(t)}` : ""}` };
+  const b = blocking(a);
   const tone = t && t - now < DAY ? "warn" : "err";
-  return { tone, label: win ? limitLabel(win.key) : errorLabel(account.lastError), back: t, window: win?.key || null, group: "waiting" };
+  const how = a.state === "locked" ? "Locked after a 429" : "Skipped: usage shows 0% left";
+  return { tone, label: b ? limitLabel(b.key) : errHuman(a.lastError), back: t, win: b?.key || null, group: "wait", tip: `${how}${t ? ` · back ${formatFull(t)}` : ""}` };
 }
 
-const rankOf = (order) => (!order ? Infinity : order.startsWith("R") ? 1000 + Number(order.slice(1)) : Number(order));
+export const rankNum = (o) => (!o ? Infinity : o[0] === "R" ? 1000 + Number(o.slice(1)) : Number(o));
+export const weekBucket = (a, at) => { const r = ts(a.windows?.["7d"]?.resetAt); return r && r > at + 6e4 ? Math.round(r / HOUR) : Infinity; };
 
-/** Gateway order: in rotation (by order), then waiting (by when back), then disabled. */
-export function groupAccounts(accounts, { strategy, now = Date.now() } = {}) {
-  const servingReserve = !accounts.some((a) => a.active && a.order === "1");
-  const withStatus = accounts.map((a) => ({ account: a, status: accountStatus(a, { strategy, servingReserve, now }) }));
-  const byPriority = (x, y) => (x.account.priority ?? 0) - (y.account.priority ?? 0);
-  const rotation = withStatus.filter((r) => r.status.group === "rotation")
-    .sort((x, y) => rankOf(x.account.order) - rankOf(y.account.order) || byPriority(x, y));
-  const waiting = withStatus.filter((r) => r.status.group === "waiting")
-    .sort((x, y) => (x.status.back || Infinity) - (y.status.back || Infinity) || byPriority(x, y));
-  const off = withStatus.filter((r) => r.status.group === "off").sort(byPriority);
-  return { rotation, waiting, off };
+// Where would this account land once it is back (if nothing else changes)?
+export function rankWhenBack(a, all) {
+  const t = backAt(a);
+  if (!t || !a.active || a.role === "reserve") return null;
+  const pool = all.filter((x) => x.active && x.role !== "reserve" && (x === a || x.order || (backAt(x) && backAt(x) <= t)));
+  pool.sort((x, y) => (weekBucket(x, t) - weekBucket(y, t)) || (x.priority - y.priority));
+  const pos = pool.indexOf(a) + 1;
+  return { pos, t, known: weekBucket(a, t) !== Infinity, ahead: pos > 1 ? pool[pos - 2] : null, behind: pool[pos] || null };
 }
-
-/** Summary counts + the next account to come back. */
-export function poolSummary(groups) {
-  const all = [...groups.rotation, ...groups.waiting, ...groups.off];
-  const inUse = groups.rotation.find((r) => r.status.live) || null;
-  const reserve = groups.rotation.filter((r) => r.status.tone === "reserve");
-  const ready = groups.rotation.filter((r) => r.status.tone === "ok");
-  const next = groups.waiting.find((r) => r.status.back) || null;
-  return {
-    total: all.length,
-    usable: ready.length,
-    reserve: reserve.length,
-    out: groups.waiting.length,
-    disabled: groups.off.length,
-    inUse,
-    next,
-    strip: all,
-  };
-}
-
-export const TONE_DOT = {
-  ok: "bg-green-500",
-  warn: "bg-amber-500",
-  err: "bg-red-500",
-  reserve: "bg-violet-500",
-  info: "bg-blue-500",
-  muted: "bg-gray-400 dark:bg-gray-500",
-};
-
-export const TONE_CHIP = {
-  ok: "bg-green-500/10 text-green-700 dark:text-green-400",
-  warn: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  err: "bg-red-500/[0.08] text-red-600 dark:text-red-400",
-  reserve: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
-  info: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
-  muted: "bg-black/[0.04] text-text-muted dark:bg-white/[0.06]",
-};
