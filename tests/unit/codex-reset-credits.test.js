@@ -7,7 +7,10 @@ const mocks = vi.hoisted(() => ({
   refreshAndUpdateCredentials: vi.fn(),
   getCodexRateLimitResetCredits: vi.fn(),
   consumeCodexRateLimitResetCredit: vi.fn(),
+  hasUnsettledReset: vi.fn(async () => false),
 }));
+
+vi.mock("@/lib/ops/resets.js", () => ({ hasUnsettledReset: mocks.hasUnsettledReset }));
 
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: mocks.proxyAwareFetch,
@@ -204,6 +207,98 @@ describe("Codex reset credits", () => {
       "token",
       expect.any(String),
       expect.objectContaining({ strictProxy: false }),
+      { providerSpecificData: {} },
     );
   });
+
+  it("POST refuses while a 9r attempt on the account is unsettled, without consuming", async () => {
+    mocks.getProviderConnectionById.mockResolvedValue({ id: "conn_1", provider: "codex", authType: "access_token", accessToken: "token", providerSpecificData: {} });
+    mocks.hasUnsettledReset.mockResolvedValueOnce(true);
+    const { POST } = await import("../../src/app/api/usage/[connectionId]/codex-reset-credits/route.js");
+    const response = await POST(new Request("http://localhost/api/usage/conn_1/codex-reset-credits", { method: "POST" }), { params: Promise.resolve({ connectionId: "conn_1" }) });
+    expect(response.status).toBe(409);
+    expect(mocks.consumeCodexRateLimitResetCredit).not.toHaveBeenCalled();
+  });
+
+  it("POST reports an unanswered consume as unknown, not as a failure", async () => {
+    mocks.getProviderConnectionById.mockResolvedValue({ id: "conn_1", provider: "codex", authType: "access_token", accessToken: "token", providerSpecificData: {} });
+    mocks.consumeCodexRateLimitResetCredit.mockResolvedValue({ ok: false, uncertain: true, status: null, code: null, windowsReset: 0, message: "No answer from Codex: timeout" });
+    const { POST } = await import("../../src/app/api/usage/[connectionId]/codex-reset-credits/route.js");
+    const response = await POST(new Request("http://localhost/api/usage/conn_1/codex-reset-credits", { method: "POST" }), { params: Promise.resolve({ connectionId: "conn_1" }) });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ reset: null, message: expect.stringMatching(/Couldn't confirm/) });
+  });
+
+  it("POST binds the consume call to the account and reports nothing_to_reset as 409", async () => {
+    mocks.getProviderConnectionById.mockResolvedValue({
+      id: "conn_1",
+      provider: "codex",
+      authType: "access_token",
+      accessToken: "token",
+      providerSpecificData: { chatgptAccountId: "acct_9" },
+    });
+    mocks.consumeCodexRateLimitResetCredit.mockResolvedValue({
+      ok: false,
+      nothingToReset: true,
+      status: 200,
+      code: "nothing_to_reset",
+      windowsReset: 0,
+    });
+
+    const { POST } = await import("../../src/app/api/usage/[connectionId]/codex-reset-credits/route.js");
+    const response = await POST(new Request("http://localhost/api/usage/conn_1/codex-reset-credits", { method: "POST" }), {
+      params: Promise.resolve({ connectionId: "conn_1" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "nothing_to_reset", reset: false });
+    expect(mocks.consumeCodexRateLimitResetCredit.mock.calls[0][3]).toEqual({ providerSpecificData: { chatgptAccountId: "acct_9" } });
+  });
 });
+
+describe("consumeCodexRateLimitResetCredit", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+  const respond = (body, status = 200) => mocks.proxyAwareFetch.mockResolvedValue({ ok: status < 400, status, text: async () => JSON.stringify(body) });
+
+  it("sends the account header and credit id, and reads every documented code", async () => {
+    const { consumeCodexRateLimitResetCredit } = await import("../../open-sse/services/usage/codex.js");
+    respond({ code: "reset", windows_reset: 2 });
+    const ok = await consumeCodexRateLimitResetCredit("t", "rid-1", null, { providerSpecificData: { chatgptAccountId: "acct_1" }, creditId: "cr_1" });
+    expect(ok).toMatchObject({ ok: true, uncertain: false, windowsReset: 2 });
+    const [, init] = mocks.proxyAwareFetch.mock.calls[0];
+    expect(init.headers["ChatGPT-Account-ID"]).toBe("acct_1");
+    expect(JSON.parse(init.body)).toEqual({ redeem_request_id: "rid-1", credit_id: "cr_1" });
+
+    respond({ code: "already_redeemed", windows_reset: 0 });
+    expect(await consumeCodexRateLimitResetCredit("t", "rid-1")).toMatchObject({ ok: true, alreadyRedeemed: true, uncertain: false });
+    respond({ code: "nothing_to_reset", windows_reset: 0 });
+    expect(await consumeCodexRateLimitResetCredit("t", "rid-2")).toMatchObject({ ok: false, nothingToReset: true, uncertain: false });
+    respond({ code: "something_new", windows_reset: 1 });
+    expect(await consumeCodexRateLimitResetCredit("t", "rid-3")).toMatchObject({ ok: false, uncertain: true });
+  });
+
+  it("a request that got no answer is uncertain, not a failure", async () => {
+    const { consumeCodexRateLimitResetCredit } = await import("../../open-sse/services/usage/codex.js");
+    mocks.proxyAwareFetch.mockRejectedValue(new Error("socket hang up"));
+    expect(await consumeCodexRateLimitResetCredit("t", "rid-4")).toMatchObject({ ok: false, uncertain: true, status: null });
+  });
+});
+
+describe("getCodexUsage account binding", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+  it("sends ChatGPT-Account-ID in the same order as the executor (workspaceId, chatgptAccountId, accountId)", async () => {
+    const { getCodexUsage } = await import("../../open-sse/services/usage/codex.js");
+    mocks.proxyAwareFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ rate_limit: {} }) });
+    await getCodexUsage("t", null, { chatgptAccountId: "ws-A", accountId: "ws-B" });
+    expect(mocks.proxyAwareFetch.mock.calls[0][1].headers["ChatGPT-Account-ID"]).toBe("ws-A");
+    await getCodexUsage("t", null, null);
+    expect(mocks.proxyAwareFetch.mock.calls[1][1].headers["ChatGPT-Account-ID"]).toBeUndefined();
+  });
+});
+

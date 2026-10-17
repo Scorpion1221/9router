@@ -378,6 +378,9 @@ export default function ProviderLimits() {
         await fetchQuota(connectionId, provider, { force: true });
         setLastUpdated(new Date());
       } catch (error) {
+        // Re-read even on failure: an attempt with no definite answer may have used
+        // the reset, and the button must not offer a stale count.
+        await fetchQuota(connectionId, provider, { force: true }).catch(() => {});
         setErrors((prev) => ({ ...prev, [connectionId]: error.message || "Failed to reset limit" }));
       } finally {
         setResettingLimitId(null);

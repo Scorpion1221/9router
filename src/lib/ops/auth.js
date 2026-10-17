@@ -57,7 +57,9 @@ export function opsRoute(requiredScope, handler) {
       const body = await handler(request, { ...ctx, token: auth.token });
       return body instanceof Response ? body : json(body, 200);
     } catch (error) {
-      if (error?.status && error.status < 500) return json({ error: error.message }, error.status);
+      // 4xx, and 5xx raised with opsError (their message is written for the caller;
+      // anything thrown elsewhere stays "internal error").
+      if (error?.status && (error.status < 500 || error.expose === true)) return json({ error: error.message }, error.status);
       console.error(`[ops] ${new URL(request.url).pathname} failed: ${error?.message || error}`);
       return json({ error: "internal error" }, 500);
     }
@@ -65,5 +67,5 @@ export function opsRoute(requiredScope, handler) {
 }
 
 export function opsError(status, message) {
-  return Object.assign(new Error(message), { status });
+  return Object.assign(new Error(message), { status, expose: true });
 }

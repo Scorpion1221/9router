@@ -28,6 +28,8 @@ Config lives in `~/.9r/config.json` (mode 600). `NINE_ROUTER_OPS_URL` and `NINE_
 | `9r health --since 24h --by hour` | Client-visible success and latency. `--by model\|key\|error\|status` |
 | `9r accounts --provider claude --state locked` | Upstream account pool: state, lock expiry, 429s, last success |
 | `9r quota <account>` | Remaining quota windows (5h / weekly / per-model) |
+| `9r resets [--provider claude]` | Claude limit resets / Codex reset credits left per account (read-only); `show <account>` for grants, use-by dates and current usage |
+| `9r resets use <account>` | **Two steps, admin.** Without `--code` it only checks live and prints what a reset would refill, warnings and a one-time code. `--code <code>` spends it (irreversible) |
 | `9r errors --since 1h` | Failed upstream attempts by provider and error class |
 | `9r usage --by key,model --model opus-5` | Which client key calls which model |
 | `9r combos` | Combos: list, `show`, `create`, `set`, `add`, `remove`, `rename`, `delete` (writes need admin) |
@@ -56,4 +58,5 @@ Metrics are kept for 7 days (`REQUEST_METRICS_RETENTION_DAYS`).
 - Failed attempts lock the client IP out progressively, the same way as the dashboard login.
 - `/api/ops/*` ignores cookies, so CSRF doesn't apply.
 - Combo writes need an `admin` token: a restricted API key that allows a combo can call every member, so editing members changes what those keys reach. Every write is logged with the token name, and `rename`/`delete` warn about keys that list the combo.
+- Limit resets are never spent by a read. `9r resets use` needs an admin token and two calls: the first re-reads the account live, refuses a reset that would not apply (not at a limit, cooldown, a grant that would not unblock the account) and returns a 6-character code valid 5 minutes for the same token; only the second call with that code spends it. The idempotency key is fixed at the first call, and an attempt without a definite answer is re-checked before anything is resent, so a retry can't spend twice.
 - Responses use an allowlist. OAuth tokens, refresh tokens, upstream API keys and inference keys are never returned.

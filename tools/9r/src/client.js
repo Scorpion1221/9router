@@ -36,7 +36,7 @@ export async function api(path, { method = "GET", body, query } = {}) {
   } catch (e) {
     let reason = e?.name === "TimeoutError" ? `no answer within ${TIMEOUT_MS / 1000}s` : (e?.cause?.code || e?.message || "network error");
     reason = String(reason).split(cfg.token).join("<token>"); // never echo the token
-    throw new CliError(`cannot reach ${cfg.endpoint}: ${reason}`, { help: ["Check the endpoint with `9r config show`"] });
+    throw Object.assign(new CliError(`cannot reach ${cfg.endpoint}: ${reason}`, { help: ["Check the endpoint with `9r config show`"] }), { status: null, noAnswer: true });
   }
 
   let data = null;
@@ -50,5 +50,7 @@ export async function api(path, { method = "GET", body, query } = {}) {
   if (res.status === 404 && /^\/[a-z]/.test(path) && !data?.error) {
     throw new CliError("ops API not found on this gateway", { help: ["The gateway may be older than the ops API; deploy a newer 9router"] });
   }
-  throw new CliError(msg, { exitCode: res.status === 400 ? 2 : 1 });
+  // A 5xx without the gateway's own JSON error (e.g. a proxy 502/504) means the
+  // request may or may not have run.
+  throw Object.assign(new CliError(msg, { exitCode: res.status === 400 ? 2 : 1 }), { status: res.status, noAnswer: res.status >= 500 && !data?.error });
 }

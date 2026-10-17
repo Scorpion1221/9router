@@ -7,6 +7,7 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "../route.js";
 import { liftQuotaLockNow } from "@/sse/services/quotaPoller.js";
 import { clearQuotaSnapshot } from "open-sse/services/quotaState.js";
+import { hasUnsettledReset } from "@/lib/ops/resets.js";
 
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
 
@@ -30,6 +31,24 @@ function getResponseForConsumeResult(result, redeemRequestId) {
       redeemRequestId,
       credit: result.raw?.credit || null,
     });
+  }
+
+  if (result.uncertain) {
+    return Response.json({
+      code: result.code || "unknown_outcome",
+      reset: null,
+      windows_reset: result.windowsReset,
+      message: `Couldn't confirm whether the reset credit was used (${result.message || result.code || `HTTP ${result.status}`}). Refresh the credits before trying again.`,
+    }, { status: 502 });
+  }
+
+  if (result.nothingToReset) {
+    return Response.json({
+      code: "nothing_to_reset",
+      reset: false,
+      windows_reset: 0,
+      message: "Usage doesn't need a reset right now; no credit was used.",
+    }, { status: 409 });
   }
 
   if (result.noCredit) {
@@ -135,15 +154,21 @@ export async function POST(request, { params }) {
       connection = refreshed.connection;
     }
 
+    // An ops (9r) attempt on this account got no definite answer: a new attempt
+    // here would carry a fresh redeem id and could spend a second credit.
+    if (await hasUnsettledReset(connection.id)) {
+      return Response.json({ code: "reset_unsettled", reset: false, message: "A reset on this account is still unsettled (started from 9r). Finish it there, or wait 10 minutes and refresh." }, { status: 409 });
+    }
+
     // Server-generated redeem id prevents client-controlled replay
     const redeemRequestId = crypto.randomUUID();
-    let consumeResult = await consumeCodexRateLimitResetCredit(connection.accessToken, redeemRequestId, proxyOptions);
+    let consumeResult = await consumeCodexRateLimitResetCredit(connection.accessToken, redeemRequestId, proxyOptions, { providerSpecificData: connection.providerSpecificData });
 
     if (isOAuth && isAuthExpiredResult(consumeResult) && connection.refreshToken) {
       try {
         const retryResult = await refreshAndUpdateCredentials(connection, true, proxyOptions);
         connection = retryResult.connection;
-        consumeResult = await consumeCodexRateLimitResetCredit(connection.accessToken, redeemRequestId, proxyOptions);
+        consumeResult = await consumeCodexRateLimitResetCredit(connection.accessToken, redeemRequestId, proxyOptions, { providerSpecificData: connection.providerSpecificData });
       } catch (retryError) {
         console.warn(`[Codex Reset Credits] force refresh failed: ${retryError.message}`);
       }

@@ -273,6 +273,133 @@ COMMANDS.quota = {
   },
 };
 
+// ── limit resets ─────────────────────────────────────────────────────────────
+const resetRow = (r) => ({
+  account: r.account.name,
+  provider: r.account.provider,
+  left: r.readable ? r.available : "-",
+  state: r.readable ? r.state : `unreadable: ${r.message}`,
+  refills: r.refills?.join(" + ") || "-",
+  useBy: r.useBy ? until(r.useBy) : "-",
+});
+const windowText = (ws) => (ws || []).map((w) => `${w.name} ${w.remainingPct}% left${w.resetAt ? ` (resets in ${until(w.resetAt)})` : ""}`);
+
+COMMANDS.resets = {
+  flags: { provider: "value", code: "value" },
+  help: [
+    "9r resets [--provider claude|codex]       limit resets left on every account (read-only)",
+    "9r resets show <account>                  one account: grants/credits, what they refill, use-by, usable now?",
+    "9r resets use <account>                   step 1/2: live check + what it would refill; prints a code. Spends NOTHING",
+    "9r resets use <account> --code <code>     step 2/2: spends one reset (irreversible). Same token, within 5 min",
+    "Claude: free limit resets (refill 5h and/or weekly; the weekly reset day does not move).",
+    "Codex: banked reset credits (refresh 5h + weekly; the weekly reset moves to ~7 days after use).",
+    "`use` needs an admin token. Step 1 refuses when a reset would not apply (not at a limit,",
+    "cooldown, grant would not unblock) and warns when it would waste quota.",
+    "If step 2 reports outcome uncertain (or gets no answer), re-run step 2 with the SAME code: it",
+    "returns the recorded outcome or checks whether the attempt landed before resending with the",
+    "same idempotency key, so it cannot spend twice.",
+    "examples:",
+    "  9r resets --provider claude",
+    "  9r resets show baoqidev02-team",
+    "  9r resets use baoqidev02-team",
+  ].join("\n"),
+  async run({ flags, positionals }) {
+    const [sub, name, extra] = positionals;
+    if (!sub || sub === "list") {
+      if (name) throw new CliError(`unexpected argument '${name}'`, { help: ["9r resets --provider claude|codex", "9r resets show <account>"], exitCode: 2 });
+      if (flags.code) throw new CliError("--code only works with `9r resets use <account>`", { exitCode: 2 });
+      if (flags.provider && !["claude", "codex"].includes(flags.provider)) throw new CliError("--provider must be claude or codex", { exitCode: 2 });
+      const res = await api("/resets", { query: { provider: flags.provider } });
+      if (!res.accounts.length) { out({ resets: `0 active ${flags.provider || "Claude/Codex"} accounts with limit resets` }); return 0; }
+      const total = res.accounts.reduce((n, r) => n + (r.readable ? r.available : 0), 0);
+      const help = ["Run `9r resets show <account>` for grants, use-by dates and current usage"];
+      if (total > 0) help.push("Run `9r resets use <account>` to check one before spending it (nothing is spent without --code)");
+      out({ count: `${total} reset(s) across ${res.accounts.length} account(s)`, accounts: res.accounts.map(resetRow), help });
+      return 0;
+    }
+    if (sub !== "show" && sub !== "use") throw new CliError(`unknown resets subcommand '${sub}'`, { help: ["9r resets [--provider p] | show <account> | use <account> [--code c]"], exitCode: 2 });
+    if (!name) throw new CliError("account name or id is required", { help: [`9r resets ${sub} <account>  (names: \`9r resets\`)`], exitCode: 2 });
+    if (extra) throw new CliError(`unexpected argument '${extra}'`, { exitCode: 2 });
+    if (flags.provider) throw new CliError(`--provider only works with \`9r resets\` (list)`, { exitCode: 2 });
+    const path = `/accounts/${encodeURIComponent(name)}/resets`;
+
+    if (sub === "show") {
+      if (flags.code) throw new CliError("--code only works with `9r resets use <account>`", { exitCode: 2 });
+      const r = await api(path);
+      if (!r.readable) { out({ account: r.account.name, provider: r.account.provider, resets: `unreadable: ${r.message}` }); return 0; }
+      const view = {
+        account: r.account.name,
+        provider: r.account.provider,
+        left: r.available,
+        state: r.state,
+        refills: r.refills?.length ? r.refills.join(" + ") : "-",
+        useBy: r.useBy || "-",
+        weeklyResetsAt: r.weeklyResetsAt || "-",
+        atLimit: r.atLimit,
+        usage: windowText(r.windows),
+      };
+      if (r.cooldownUntil) view.cooldownUntil = r.cooldownUntil;
+      if (r.grants?.length) {
+        view.grants = r.grants.map((g) => ({
+          label: g.label, left: `${g.resetsLeft}/${g.resetsTotal}`, refills: g.refills.join(" + ") || "-",
+          useBy: g.useBy || "-", state: g.state, offered: g.offered,
+        }));
+      }
+      if (r.credits?.length) view.credits = r.credits.map((c) => ({ label: c.label, status: c.expired ? "expired" : c.status, useBy: c.useBy || "never" }));
+      if (r.creditsError) view.creditsDetail = `unavailable: ${r.creditsError}`;
+      if (r.pending) view.pending = `prepared by '${r.pending.preparedBy}', code valid until ${r.pending.expiresAt}${r.pending.attempts ? ` (${r.pending.attempts} attempt(s) without a definite answer)` : ""}`;
+      if (r.lastOutcome) view.lastOutcome = `${r.lastOutcome.outcome} (spent: ${r.lastOutcome.spent}) by '${r.lastOutcome.by}' in the last 30 minutes`;
+      if (r.available > 0) view.help = [`Run \`9r resets use ${name}\` to check it live first (spends nothing)`];
+      out(view);
+      return 0;
+    }
+
+    // use
+    if (!flags.code) {
+      const p = await api(`${path}/prepare`, { method: "POST", body: {} });
+      out({
+        account: p.account.name,
+        provider: p.account.provider,
+        spent: "nothing (this was a check)",
+        wouldDo: p.action,
+        refills: p.refills.join(" + "),
+        resetsLeftAfter: p.resetsLeftAfter,
+        usageNow: windowText(p.current),
+        ...(p.warnings.length ? { warnings: p.warnings } : {}),
+        notes: p.notes,
+        confirmCode: p.confirm.code,
+        codeExpires: p.confirm.expiresAt,
+        help: [`To spend it (irreversible): 9r resets use ${name} --code ${p.confirm.code}`, "To keep it: do nothing; the code expires in 5 minutes"],
+      });
+      return 0;
+    }
+    let r;
+    try {
+      r = await api(`${path}/confirm`, { method: "POST", body: { code: flags.code } });
+    } catch (e) {
+      if (!(e instanceof CliError) || !e.noAnswer) throw e;
+      // The gateway may have spent it and the answer got lost: the same code returns
+      // the recorded outcome (or checks before resending), a new prepare would not.
+      throw new CliError(`no answer from the gateway (${e.message}); the reset may or may not have been used`, {
+        help: [`Re-run \`9r resets use ${name} --code ${flags.code}\` (same code: returns the recorded outcome, never spends twice)`, `Do NOT run \`9r resets use ${name}\` without --code until that answers`],
+      });
+    }
+    const view = { account: r.account.name, provider: r.account.provider, outcome: r.outcome, spent: r.spent };
+    if (r.message) view.message = r.message;
+    if (r.cleared?.length) view.refilled = r.cleared.join(" + ");
+    if (r.windowsReset) view.windowsReset = r.windowsReset;
+    if (r.resetsLeft != null) view.resetsLeft = r.resetsLeft;
+    if (r.outcome === "uncertain") {
+      view.help = [`Re-run \`9r resets use ${name} --code ${r.confirm.code}\` (same code, can't spend twice; valid until ${r.confirm.expiresAt})`];
+      out(view);
+      return 1;
+    }
+    if (r.outcome === "reset") view.help = [`Run \`9r quota ${name} --refresh\` to see the refilled windows`];
+    out(view);
+    return r.outcome === "reset" ? 0 : 1;
+  },
+};
+
 COMMANDS.errors = {
   flags: { since: "value" },
   help: "9r errors [--since 1h]\nFailed upstream attempts grouped by provider and error class (rate_limit, overloaded, empty_stream, stream_stall, …).",
@@ -539,6 +666,7 @@ function globalHelp() {
     "  9r health          request success/latency (--since, --by hour|model|key|error|status)",
     "  9r accounts        upstream account pool state (--provider, --state); `set` changes role/keep",
     "  9r quota <name>    remaining quota for one account (--provider claude: all + selection order)",
+    "  9r resets …        Claude limit resets / Codex reset credits: list, show, use (2-step, admin)",
     "  9r errors          failed upstream attempts by provider and error class",
     "  9r usage           requests by model / key (--by key,model --model opus)",
     "  9r combos …        list / show / create / set / add / remove / rename / delete combos",

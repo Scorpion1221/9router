@@ -28,8 +28,10 @@ function errorMessage(value, fallback) {
   return JSON.stringify(value);
 }
 
+// Same order as the Codex executor (open-sse/executors/codex.js), so usage, resets
+// and inference all bind to the same workspace.
 function getCodexAccountId(providerSpecificData) {
-  return providerSpecificData?.workspaceId || providerSpecificData?.accountId || providerSpecificData?.chatgptAccountId || null;
+  return providerSpecificData?.workspaceId || providerSpecificData?.chatgptAccountId || providerSpecificData?.accountId || null;
 }
 
 function getCodexRateLimitBody(snapshot) {
@@ -123,14 +125,18 @@ function getCodexSparkRateLimit(data) {
   }) || null;
 }
 
-export async function getCodexUsage(accessToken, proxyOptions = null) {
+export async function getCodexUsage(accessToken, proxyOptions = null, providerSpecificData = null) {
   try {
+    const headers = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Accept": "application/json",
+    };
+    // Without the binding, a login in several workspaces reports its default one.
+    const accountId = getCodexAccountId(providerSpecificData);
+    if (accountId) headers["ChatGPT-Account-ID"] = accountId;
     const response = await proxyAwareFetch(CODEX_CONFIG.usageUrl, {
       method: "GET",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Accept": "application/json",
-      },
+      headers,
     }, proxyOptions);
 
     if (!response.ok) {
@@ -197,6 +203,8 @@ export async function getCodexRateLimitResetCredits(accessToken, proxyOptions = 
   return {
     availableCount: Math.max(0, toFiniteNumber(data?.available_count ?? data?.availableCount, 0)),
     credits: credits.map((credit) => ({
+      ...(typeof credit?.id === "string" && credit.id ? { id: credit.id } : {}),
+      ...(typeof credit?.title === "string" && credit.title ? { title: credit.title } : {}),
       status: String(credit?.status || "unknown"),
       grantedAt: toIsoDate(credit?.granted_at ?? credit?.grantedAt),
       expiresAt: toIsoDate(credit?.expires_at ?? credit?.expiresAt),
@@ -204,8 +212,14 @@ export async function getCodexRateLimitResetCredits(accessToken, proxyOptions = 
   };
 }
 
-// Consume one Codex rate-limit reset credit (irreversible, spends 1 credit)
-export async function consumeCodexRateLimitResetCredit(accessToken, redeemRequestId, proxyOptions = null) {
+// Consume codes the Codex CLI knows; any other code is not a definite answer.
+const CODEX_CONSUME_CODES = new Set(["reset", "nothing_to_reset", "no_credit", "already_redeemed"]);
+const CODEX_RESET_TIMEOUT_MS = 20000;
+
+// Consume one Codex rate-limit reset credit (irreversible, spends 1 credit).
+// redeemRequestId is the idempotency key: a retry of the same attempt must reuse it
+// (the backend then answers already_redeemed instead of spending a second credit).
+export async function consumeCodexRateLimitResetCredit(accessToken, redeemRequestId, proxyOptions = null, { providerSpecificData = null, creditId = null } = {}) {
   if (!accessToken) {
     throw new Error("No Codex access token available. Please re-authorize the connection.");
   }
@@ -213,32 +227,44 @@ export async function consumeCodexRateLimitResetCredit(accessToken, redeemReques
     throw new Error("A redeem request id is required to consume a Codex reset credit.");
   }
 
+  // Same account binding as every other Codex call: without it a multi-workspace
+  // login could spend the credit of (or reset) a different account.
+  const headers = {
+    "Authorization": `Bearer ${accessToken}`,
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+  };
+  const accountId = getCodexAccountId(providerSpecificData);
+  if (accountId) headers["ChatGPT-Account-ID"] = accountId;
+
   let response;
   let data = null;
   try {
     response = await proxyAwareFetch(CODEX_CONFIG.resetCreditsConsumeUrl, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ redeem_request_id: redeemRequestId }),
+      headers,
+      body: JSON.stringify({ redeem_request_id: redeemRequestId, ...(creditId ? { credit_id: creditId } : {}) }),
+      signal: AbortSignal.timeout(CODEX_RESET_TIMEOUT_MS),
     }, proxyOptions);
 
     const text = await response.text();
     data = text ? JSON.parse(text) : null;
   } catch (error) {
-    throw new Error(`Failed to consume Codex reset credit: ${error.message}`);
+    // The request may have reached the backend: the outcome is unknown, not a failure.
+    return { ok: false, uncertain: true, noCredit: false, nothingToReset: false, alreadyRedeemed: false, status: response?.status ?? null, code: null, windowsReset: 0, message: `No answer from Codex: ${error.message}`, raw: null };
   }
 
   const code = data?.code || null;
   const windowsReset = toFiniteNumber(data?.windows_reset, 0);
-  const success = response.ok && (code === "reset" || windowsReset > 0);
+  // already_redeemed: this same redeem id already reset the windows (idempotent success).
+  const success = response.ok && (code === "reset" || code === "already_redeemed");
 
   return {
     ok: success,
+    uncertain: !(response.ok && CODEX_CONSUME_CODES.has(code)),
     noCredit: response.ok && code === "no_credit",
+    nothingToReset: response.ok && code === "nothing_to_reset",
+    alreadyRedeemed: response.ok && code === "already_redeemed",
     status: response.status,
     code,
     windowsReset,

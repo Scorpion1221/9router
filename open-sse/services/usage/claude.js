@@ -143,6 +143,9 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
         plan: "Claude Code",
         extraUsage: data.extra_usage ?? null,
         resetCredits: parseClaudeResetGrants(data.cedar_ember),
+        resetEligibility: data.cedar_ember && typeof data.cedar_ember === "object"
+          ? { eligible: data.cedar_ember.eligible === true, reason: data.cedar_ember.ineligible_reason || null }
+          : null,
         quotas,
       };
     }
@@ -164,15 +167,22 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
 // Shape: { eligible, next_grant_id, grants: [{ id, resets_left, ends_at, paused, clears }] }
 export function parseClaudeResetGrants(block) {
   if (!block?.eligible || !Array.isArray(block.grants)) return null;
-  const grants = block.grants.filter((g) => g?.id && !g.paused && Number(g.resets_left) > 0);
+  const now = Date.now();
+  const live = (g) => !(g.ends_at && Date.parse(g.ends_at) <= now) && !(g.starts_at && Date.parse(g.starts_at) > now);
+  // Expired and not-yet-started grants can't be spent; don't count them as available.
+  const grants = block.grants.filter((g) => g?.id && !g.paused && Number(g.resets_left) > 0 && live(g));
   const next = grants.find((g) => g.id === block.next_grant_id) || grants[0] || null;
   return {
     availableCount: grants.reduce((sum, g) => sum + Number(g.resets_left), 0),
     nextGrantId: next?.id || null,
+    // The grant the server offers right now; Claude Code only ever claims this one.
+    offeredGrantId: block.grants.some((g) => g?.id && g.id === block.next_grant_id) ? block.next_grant_id : null,
     expiresAt: next?.ends_at || null,
     clears: next?.clears || [],
     cooldownUntil: block.cooldown_until || null,
     weeklyResetsAt: block.weekly_resets_at || null,
+    atLimit: block.at_limit === true,
+    exhausted: Array.isArray(block.exhausted) ? block.exhausted : [],
     grants: block.grants.filter((g) => g?.id).map((g) => ({
       id: g.id,
       label: g.label || "",
@@ -184,14 +194,28 @@ export function parseClaudeResetGrants(block) {
       paused: g.paused === true,
       usableNow: g.usable_now === true,
       useRequiresLimit: g.use_requires_limit !== false,
+      // Exhausted limits this grant does NOT refill: spending it would not unblock the account.
+      blocking: Array.isArray(g.blocking) ? g.blocking : [],
+      // Current % used of each limit the grant refills, e.g. { seven_day: 80 }.
+      percentUsed: g.percent_used && typeof g.percent_used === "object" && !Array.isArray(g.percent_used)
+        ? Object.fromEntries(Object.entries(g.percent_used).filter(([, v]) => Number.isFinite(v) && v >= 0 && v <= 100))
+        : {},
     })),
   };
 }
 
+// Results Claude Code treats as a definite answer. Anything else (unavailable, an
+// HTTP error, no answer) means the reset may or may not have gone through.
+const CLAUDE_RESET_DEFINITE = new Set(["reset", "already_used", "not_limited", "cooldown", "ineligible"]);
+const RESET_TIMEOUT_MS = 20000;
+
 // Spend one reset grant: refills the limits listed in grant.clears. Irreversible.
-export async function consumeClaudeResetGrant(accessToken, grantId, proxyOptions = null) {
+// requestId is the idempotency key: retry an attempt that got no definite answer
+// with the same one, never with a new one.
+export async function consumeClaudeResetGrant(accessToken, grantId, proxyOptions = null, { requestId = crypto.randomUUID() } = {}) {
   if (!accessToken) throw new Error("No Claude access token available. Please re-authorize the connection.");
   if (!/^[a-z0-9_-]{1,40}$/.test(grantId || "")) throw new Error("Invalid reset grant id.");
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(requestId || "")) throw new Error("Invalid reset request id.");
 
   const headers = {
     "Authorization": `Bearer ${accessToken}`,
@@ -206,20 +230,31 @@ export async function consumeClaudeResetGrant(accessToken, grantId, proxyOptions
   const orgId = profile?.organization?.uuid;
   if (!profileRes.ok || !orgId) throw new Error(`Cannot resolve Claude organization (${profileRes.status}).`);
 
-  const res = await proxyAwareFetch(CLAUDE_CONFIG.resetUrl.replace("{org_id}", orgId), {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ program: "cedar_ember", grant_id: grantId, request_id: crypto.randomUUID() }),
-  }, proxyOptions);
-  const data = await res.json().catch(() => null);
+  let res;
+  let data = null;
+  try {
+    res = await proxyAwareFetch(CLAUDE_CONFIG.resetUrl.replace("{org_id}", orgId), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ program: "cedar_ember", grant_id: grantId, request_id: requestId }),
+      signal: AbortSignal.timeout(RESET_TIMEOUT_MS),
+    }, proxyOptions);
+    data = await res.json().catch(() => null);
+  } catch (error) {
+    usageCache.delete(accessToken);
+    return { ok: false, uncertain: true, status: null, result: null, reason: null, resetsLeft: null, cleared: [], message: `No answer from Anthropic: ${error.message}` };
+  }
 
   usageCache.delete(accessToken); // next read must show refilled limits
+  const result = data?.result || null;
   return {
-    ok: res.ok && data?.result === "reset",
+    ok: res.ok && result === "reset",
+    uncertain: !(res.ok && CLAUDE_RESET_DEFINITE.has(result)),
     status: res.status,
-    result: data?.result || null,
+    result,
     reason: data?.reason || null,
     resetsLeft: data?.resets_left ?? null,
+    cleared: Array.isArray(data?.cleared) ? data.cleared : [],
     message: data?.error?.message || null,
   };
 }

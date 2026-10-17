@@ -1,6 +1,6 @@
 ---
 name: 9router-ops
-description: Check and operate a 9router gateway with the `9r` CLI — health, success rate and latency, upstream account pool (locked / rate-limited accounts), remaining quota, which client uses which model, combo (fallback chain) edits, and an ok/warn/crit check for scheduled monitoring. Use when asked whether 9router is healthy, slow or failing, about account quota or 429s, or to set up 9router monitoring.
+description: Check and operate a 9router gateway with the `9r` CLI — health, success rate and latency, upstream account pool (locked / rate-limited accounts), remaining quota, which client uses which model, combo (fallback chain) edits, Claude/Codex limit resets, and an ok/warn/crit check for scheduled monitoring. Use when asked whether 9router is healthy, slow or failing, about account quota or 429s, or to set up 9router monitoring.
 ---
 
 # 9router ops (`9r`)
@@ -18,6 +18,8 @@ Start with `9r` (no arguments): it prints the live overview and suggests next co
 | Are accounts locked or rate limited? | `9r accounts --provider claude` / `9r accounts --state locked` |
 | How much quota is left? | `9r quota --provider claude` (all accounts + the order they are used in) / `9r quota <account name>` |
 | Keep an account mostly for yourself | `9r accounts set <name> --role reserve --keep 30 [--release-before 12h]` (operate token) |
+| Limit resets left (Claude free resets, Codex reset credits)? | `9r resets` / `9r resets show <account>` (read-only) |
+| Spend a limit reset | `9r resets use <account>` (check only, prints a code) → show the user what it refills and the warnings, get their explicit OK → `9r resets use <account> --code <code>` (admin). Never pass `--code` without the user's confirmation; resets are scarce |
 | Who still uses model X? | `9r usage --by key,model --model <substring>` |
 | Routing config | `9r combos`, `9r combos show <name>`, `9r keys` |
 | Change a combo's fallback chain | `9r combos add <name> <provider/model> [--at 1]`, `remove`, `set <name> --models a,b --strategy fallback`, `create`, `rename`, `delete <name> --yes` (admin token) |
