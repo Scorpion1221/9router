@@ -106,8 +106,8 @@
 .qcl .dot.live{animation:qcl-pulse 2.4s ease-in-out infinite}
 
 /* list grid */
-.qcl .list{--cols:18px 34px minmax(170px,1fr) 248px 112px 136px 136px;margin-top:6px}
-.qcl .list.priority{--cols:16px 18px 34px minmax(170px,1fr) 248px 112px 136px 136px}
+.qcl .list{--cols:18px 34px minmax(160px,1fr) 236px 108px 132px 172px;margin-top:6px}
+.qcl .list.priority{--cols:16px 18px 34px minmax(160px,1fr) 236px 108px 132px 172px}
 .qcl .grid{display:grid;grid-template-columns:var(--cols);align-items:center;column-gap:12px;padding:0 12px}
 .qcl .list:not(.priority) .c-drag{display:none}
 .qcl .c-quota{display:contents}
@@ -329,3 +329,32 @@
 html:not(.dark) .qcl .bsum-next .when{color:var(--warn-ink)}
 /* Buttons keep the UA padding the preview had; the icon grid centers them. */
 .qcl button.ib,.qcl button.err-i{padding:1px 6px}
+
+/* Limit reset dialog (LimitResetDialog.js), in the card's tokens. */
+.qcl .rdlg-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.55);backdrop-filter:blur(2px)}
+.qcl .rdlg{width:min(520px,100%);border-radius:14px;background:var(--surface);border:1px solid var(--border);box-shadow:var(--pop-shadow);animation:qcl-pop .14s ease-out}
+.qcl .rdlg-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px 12px;border-bottom:1px solid var(--border-subtle)}
+.qcl .rdlg-head h3{margin:0;font-size:15px;font-weight:600}
+.qcl .rdlg-head p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.qcl .rdlg-body{display:grid;gap:10px;padding:14px 18px;font-size:12.5px;line-height:1.5}
+.qcl .rdlg-muted{margin:0;color:var(--muted)}
+.qcl .rdlg-stats{display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 12px;border-radius:9px;background:var(--bg-alt);border:1px solid var(--border-subtle);color:var(--muted)}
+.qcl .rdlg-stats b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.qcl .rdlg-win{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.qcl .rdlg-win th{padding:0 10px 5px 0;color:var(--subtle);font-size:11.5px;font-weight:500;text-align:left}
+.qcl .rdlg-win td{padding:5px 10px 5px 0;border-top:1px solid var(--border-subtle);color:var(--muted)}
+.qcl .rdlg-win td:first-child{color:var(--text)}
+.qcl .rdlg-win td.zero{color:var(--err-ink);font-weight:600}
+.qcl .rdlg-plan{display:grid;gap:6px}
+.qcl .rdlg-plan p,.qcl .rdlg-note{margin:0}
+.qcl .rdlg-note{color:var(--muted)}
+.qcl .rdlg-note.warn{color:var(--warn-ink)}
+.qcl .rdlg-note.ok{color:var(--ok-ink)}
+.qcl .rdlg-note .ms{font-size:15px;vertical-align:-3px}
+.qcl .rdlg-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid var(--border-subtle)}
+.qcl .btn-danger{background:var(--err);color:#fff}
+.qcl .btn-danger:hover{background:color-mix(in srgb,var(--err) 85%,#000)}
+.qcl .btn-danger:disabled{opacity:.7;cursor:default}
+.qcl .ib.rs{display:inline-flex;align-items:center;justify-content:center;width:auto;min-width:28px;gap:2px;padding:0 6px;font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.qcl .ib.rs .ms{font-size:16px}
+.qcl .ib.rs.has{color:var(--brand)}

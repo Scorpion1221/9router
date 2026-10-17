@@ -53,9 +53,10 @@ describe("statusOf (other strategies)", () => {
 });
 
 describe("formatting", () => {
-  it("one time per row: countdown under a day, weekday beyond", () => {
+  it("one time per row, always a countdown (no weekday to work out)", () => {
     expect(formatWhen(NOW + 85 * 60e3, NOW)).toBe("in 1h 25m");
-    expect(formatWhen(NOW + 3 * 24 * H, NOW)).not.toMatch(/^in /);
+    expect(formatWhen(NOW + 25 * H + 46 * 60e3, NOW)).toBe("in 1d 2h");
+    expect(formatWhen(NOW + 3 * 24 * H, NOW)).toBe("in 3d");
     expect(formatDuration(52 * H)).toBe("2d 4h");
   });
 

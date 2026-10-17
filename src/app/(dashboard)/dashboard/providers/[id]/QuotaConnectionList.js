@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import "./quotaConnections.css";
+import LimitResetDialog from "./LimitResetDialog";
 import {
   formatFull, formatWhen, formatDuration, parseUpstreamError, statusOf, rankWhenBack, weekBucket, rankNum,
   modelName, winLabel, windowWord, windowsOf,
@@ -49,6 +50,21 @@ function usePoolView(providerId, connections, strategyKey) {
   return { view, error, reload: () => setNonce((n) => n + 1) };
 }
 
+// Resets left per account (Claude limit resets / Codex reset credits), for the
+// count on each row's reset button. Cached usage reads; refetched after a reset.
+function useResetCounts(providerId, nonce) {
+  const [counts, setCounts] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/providers/resets?provider=${encodeURIComponent(providerId)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d?.accounts) setCounts(Object.fromEntries(d.accounts.map((a) => [a.id, a]))); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [providerId, nonce]);
+  return counts;
+}
+
 function useNow() {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -87,7 +103,11 @@ export default function QuotaConnectionList({
   const [menuFor, setMenuFor] = useState(null);
   const [pinnedErr, setPinnedErr] = useState(null);
   const [testingId, setTestingId] = useState(null);
+  const [refreshingId, setRefreshingId] = useState(null);
   const [toast, setToast] = useState(null);
+  const [resetFor, setResetFor] = useState(null);
+  const [resetNonce, setResetNonce] = useState(0);
+  const resetCounts = useResetCounts(providerId, resetNonce);
   const rootRef = useRef(null);
   const tipRef = useRef(null);
 
@@ -189,6 +209,22 @@ export default function QuotaConnectionList({
       setToast(ok === false ? `${a.name}: test failed` : `${a.name}: test finished`);
     } finally { setTestingId(null); }
   };
+  // Same read as the Quota Tracker's refresh; a fresh usage reading also feeds the gateway's live quota.
+  const refreshQuota = async (a) => {
+    setMenuFor(null);
+    setRefreshingId(a.id);
+    try {
+      const res = await fetch(`/api/usage/${a.id}?force=1`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      // A soft failure comes back 200 with only a message (e.g. the usage API is rate limited).
+      const failed = !res.ok || (data.message && !data.quotas);
+      setToast(failed ? `${a.name}: ${data.error || data.message || `quota refresh failed (HTTP ${res.status})`}` : `${a.name}: quota refreshed`);
+      reload();
+      setResetNonce((n) => n + 1);
+    } catch {
+      setToast(`${a.name}: quota refresh failed`);
+    } finally { setRefreshingId(null); }
+  };
   const copy = (text) => {
     if (!text) return;
     navigator.clipboard?.writeText(text).then(() => setToast("Copied the raw upstream error"), () => setToast("Copy is blocked here"));
@@ -258,6 +294,7 @@ export default function QuotaConnectionList({
   const statusCell = (a, st) => {
     const testing = testingId === a.id || oneByOneResults?.[a.id]?.state === "testing";
     if (testing) return <span className="chip t-info"><Ic name="progress_activity" className="spin" /><span className="lbl">Testing…</span></span>;
+    if (refreshingId === a.id) return <span className="chip t-info"><Ic name="progress_activity" className="spin" /><span className="lbl">Refreshing…</span></span>;
     return (
       <>
         <Tip className={`chip t-${st.tone}${st.cls ? ` ${st.cls}` : ""}`} text={st.tip}>
@@ -300,6 +337,7 @@ export default function QuotaConnectionList({
     return (
       <div className="menu" role="menu" onClick={(e) => e.stopPropagation()}>
         <button className="mi" type="button" role="menuitem" onClick={() => runTest(a)}><Ic name="network_check" />Test connection</button>
+        <button className="mi" type="button" role="menuitem" onClick={() => refreshQuota(a)}><Ic name="refresh" />Refresh quota</button>
         {pools.length > 0 && (
           <>
             <button className="mi" type="button" role="menuitem" onClick={() => { setMenuFor(null); onUpdateProxy(a.id, null); }}><Ic name="lan" />No proxy{!bound && <span className="r">current</span>}</button>
@@ -319,8 +357,15 @@ export default function QuotaConnectionList({
   const actCell = (a) => {
     const ap = autoPingFor ? autoPingFor(a.conn) : null;
     const menuOpen = menuFor === a.id;
+    const rc = resetCounts[a.id];
+    const left = rc?.available;
     return (
       <>
+        <Tip as="button" type="button" className={`ib rs${left > 0 ? " has" : ""}`}
+          text={left > 0 ? `${left} limit reset${left === 1 ? "" : "s"} left${rc.useBy ? ` · expires ${formatWhen(Date.parse(rc.useBy), now)}` : ""} · click to check or use one` : left === 0 ? "No limit resets left · click for details" : "Limit resets · click to check"}
+          onClick={() => setResetFor(a.conn)}>
+          <Ic name="restart_alt" />{left != null && <span>{left}</span>}
+        </Tip>
         {ap && (
           <Tip as="button" type="button" className={`ib${ap.on ? " on" : ""}`} aria-pressed={ap.on}
             text={ap.on
@@ -333,7 +378,7 @@ export default function QuotaConnectionList({
         <Tip as="button" type="button" className="ib" text="Edit name, role, keep %" onClick={() => onEdit(a.conn)}><Ic name="edit" /></Tip>
         <span className="menu-wrap">
           <Tip as="button" type="button" className={`ib${menuOpen ? " active" : ""}`} aria-haspopup="menu" aria-expanded={menuOpen}
-            text={menuOpen ? undefined : "Test, proxy, details, delete"} onClick={() => setMenuFor(menuOpen ? null : a.id)}>
+            text={menuOpen ? undefined : "Test, refresh quota, proxy, details, delete"} onClick={() => setMenuFor(menuOpen ? null : a.id)}>
             <Ic name="more_horiz" />
           </Tip>
           {menuOpen && menu(a)}
@@ -412,6 +457,7 @@ export default function QuotaConnectionList({
         )}
         <div className="d-actions wide">
           <button className="btn btn-secondary sm" type="button" onClick={() => runTest(a)}><Ic name="network_check" />Test connection</button>
+          <button className="btn btn-ghost sm" type="button" onClick={() => refreshQuota(a)}><Ic name="refresh" />Refresh quota</button>
           <button className="btn btn-ghost sm" type="button" onClick={() => onEdit(a.conn)}><Ic name="edit" />Edit policy</button>
         </div>
       </div>
@@ -607,6 +653,17 @@ export default function QuotaConnectionList({
         </span>
       </div>
 
+      {resetFor && (
+        <LimitResetDialog
+          connection={resetFor}
+          onClose={() => setResetFor(null)}
+          onDone={(res) => {
+            setResetNonce((n) => n + 1);
+            reload();
+            if (res?.outcome === "reset") setToast(`${resetFor.name || "Account"}: limit reset used`);
+          }}
+        />
+      )}
       <div className="tip" ref={tipRef} role="tooltip" />
       <div className={`toast${toast ? " show" : ""}`} role="status" aria-live="polite">{toast}</div>
     </section>

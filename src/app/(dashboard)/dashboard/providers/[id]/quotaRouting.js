@@ -21,17 +21,18 @@ export function formatDuration(ms) {
 }
 
 // English like the rest of the dashboard (the browser locale would mix in e.g. Chinese weekdays).
-const SHORT = new Intl.DateTimeFormat("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 export const formatFull = (t) => FULL.format(new Date(t));
 
-/** One time per row: a countdown inside 24h, weekday + time beyond it. */
+/**
+ * One time per row, always as a countdown ("in 1d 1h", "in 3h 20m"): how long is
+ * left is what the list is read for. The absolute time is in tooltips (formatFull).
+ */
 export function formatWhen(t, now = Date.now()) {
   const d = t - now;
   if (d <= 0) return "now";
-  if (d < DAY) return `in ${formatDuration(d)}`;
-  return d > 6 * DAY ? FULL.format(new Date(t)) : SHORT.format(new Date(t));
+  return `in ${formatDuration(d)}`;
 }
 
 const ts = (iso) => (iso ? Date.parse(iso) : null);
