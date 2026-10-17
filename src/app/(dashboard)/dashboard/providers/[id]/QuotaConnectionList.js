@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import "./quotaConnections.css";
 import {
-  backAt, formatFull, formatWhen, formatDuration, parseUpstreamError, statusOf, rankWhenBack, weekBucket, rankNum,
+  formatFull, formatWhen, formatDuration, parseUpstreamError, statusOf, rankWhenBack, weekBucket, rankNum,
   modelName, winLabel, windowWord, windowsOf,
 } from "./quotaRouting";
 
@@ -486,7 +486,6 @@ export default function QuotaConnectionList({
   const soon = out.filter((r) => r.st.back && r.st.back - now < DAY).length;
   const disabled = withStatus.filter((r) => r.st.group === "off").length;
   const next = [...out].filter((r) => r.st.back).sort((x, y) => x.st.back - y.st.back)[0] || null;
-  const proj = next ? rankWhenBack(next.a, accounts) : null;
   const inUse = withStatus.find((r) => r.st.cls === "use");
   const stripRows = [
     ...withStatus.filter((r) => r.st.group === "rot").sort((x, y) => rankNum(x.a.order) - rankNum(y.a.order)),
@@ -534,7 +533,6 @@ export default function QuotaConnectionList({
           {next && (
             <span>
               <Ic name="schedule" /> Next back <b>{next.a.name}</b> <span className="when" title={formatFull(next.st.back)}>{formatWhen(next.st.back, now)}</span>
-              {proj && isResetFirst && <span>{proj.pos === 1 ? (inUse ? ` · takes over #1 from ${inUse.a.name}` : " · becomes #1") : ` · rejoins at #${proj.pos}`}</span>}
             </span>
           )}
         </div>
