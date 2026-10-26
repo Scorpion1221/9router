@@ -522,10 +522,12 @@ export async function handleComboChat({
         }
 
         // Second gate: the stream must carry answer content (text or a tool call),
-        // not just role / reasoning frames.
+        // not just role / reasoning frames. The last candidate has nothing to fall
+        // through to, so holding its stream would only delay the client.
+        const isLastCandidate = i === rotatedModels.length - 1;
         let peeked = null;
         try {
-          peeked = probeStreamFirstByte ? await peekComboResponse(committed, log, signal) : null;
+          peeked = probeStreamFirstByte && !isLastCandidate ? await peekComboResponse(committed, log, signal) : null;
         } catch (peekErr) {
           // peekStreamForContent is written not to throw; if reconstruction/Response
           // construction ever does, result.body is already locked by getReader() and can no

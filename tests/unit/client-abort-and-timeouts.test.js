@@ -19,7 +19,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 const { handleComboChat } = await import("../../open-sse/services/combo.js");
 const { probeFirstContent } = await import("../../open-sse/utils/streamProbe.js");
-const { FETCH_CONNECT_TIMEOUT_MS, FETCH_NONSTREAM_TIMEOUT_MS, COMBO_PROBE_TIMEOUT_MS, STREAM_STALL_TIMEOUT_MS } =
+const { FETCH_CONNECT_TIMEOUT_MS, FETCH_NONSTREAM_TIMEOUT_MS, COMBO_PROBE_TIMEOUT_MS, STREAM_STALL_TIMEOUT_MS, EMPTY_PEEK_DEADLINE_MS } =
   await import("../../open-sse/config/runtimeConfig.js");
 
 const res = (status) => ({ status, headers: { get: () => "" } });
@@ -182,6 +182,37 @@ describe("handleComboChat — slow first content", () => {
     const out = await run;
     expect(out.status).toBe(200);
     expect(tried).toEqual(["p/slow"]);
+  });
+});
+
+describe("handleComboChat — empty-content peek scope", () => {
+  // Thinking first: a reasoning-only head is not answer content, so a non-final seat is
+  // held until text arrives (or the peek deadline), while the last seat streams at once.
+  const thinkingFirst = () => sseResponse([
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"m"}}\n\n',
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}\n\n',
+  ], { hold: true });
+
+  it("does not hold the last candidate's stream for answer content", async () => {
+    const started = Date.now();
+    const out = await handleComboChat({ body: {}, models: ["p/only"], handleSingleModel: async () => thinkingFirst(), log: silentLog, comboName: "c" });
+    expect(Date.now() - started).toBeLessThan(1000);
+    const reader = out.body.getReader();
+    const { value } = await reader.read();
+    expect(new TextDecoder().decode(value)).toContain("message_start");
+    await reader.cancel();
+  });
+
+  it("commits a thinking-only non-final seat once the peek deadline passes", async () => {
+    vi.useFakeTimers();
+    const tried = [];
+    const run = handleComboChat({ body: {}, models: ["p/a", "p/b"], handleSingleModel: async (_b, m) => { tried.push(m); return thinkingFirst(); }, log: silentLog, comboName: "c" });
+    await vi.advanceTimersByTimeAsync(EMPTY_PEEK_DEADLINE_MS + 100);
+    const out = await run;
+    expect(out.status).toBe(200);
+    expect(tried).toEqual(["p/a"]);
+    await out.body.cancel();
   });
 });
 
