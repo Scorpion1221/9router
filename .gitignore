@@ -102,6 +102,7 @@ graphify-out/*
 .start-dev.ps1
 start-dev-silent.cjs
 debug.log
+.scratch/
 
 # deploy/bwg: host-specific settings stay on the host
 deploy/bwg/rollout.env

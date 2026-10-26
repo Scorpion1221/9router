@@ -64,7 +64,7 @@ describe("shared native Codex catalog consumers", () => {
   });
   it("preserves separately routed Codex image models", async () => {
     const rows = await buildModelsList(["image"]);
-    expect(rows.some((m) => m.id === "cx/gpt-5.6-sol-image")).toBe(true);
+    expect(rows.some((m) => m.id === "cx/gpt-6-sol-image")).toBe(true);
     expect(rows.some((m) => m.id === "cx/gpt-6-astra")).toBe(false);
   });
   it("native model info wins over incompatible reseller context and max-output limits", async () => {

@@ -173,7 +173,7 @@ describe("handleComboChat — slow first content", () => {
     vi.useFakeTimers();
     const slow = () => new Response(new ReadableStream({
       start(c) {
-        setTimeout(() => c.enqueue(new TextEncoder().encode('event: message_start\ndata: {"type":"message_start"}\n\n')), 10_000);
+        setTimeout(() => c.enqueue(new TextEncoder().encode('event: message_start\ndata: {"type":"message_start"}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n')), 10_000);
       },
     }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
     const tried = [];
@@ -197,6 +197,23 @@ describe("handleComboChat — client abort", () => {
     const out = await handleComboChat({ body: {}, models: ["p/a", "p/b"], handleSingleModel, log: silentLog, comboName: "c", signal: ctrl.signal });
     expect(out.status).toBe(499);
     expect(tried).toEqual(["p/a"]);
+  });
+
+  it("stops waiting for answer content once the client has gone", async () => {
+    // message_start passes the first-byte probe; the empty-content peek then waits
+    // for text or a tool call and must not hold the stream for its full deadline.
+    const ctrl = new AbortController();
+    const tried = [];
+    const handleSingleModel = async (_b, m) => {
+      tried.push(m);
+      setTimeout(() => ctrl.abort(), 10);
+      return sseResponse(['event: message_start\ndata: {"type":"message_start","message":{"id":"m"}}\n\n'], { hold: true });
+    };
+    const started = Date.now();
+    const out = await handleComboChat({ body: {}, models: ["p/a", "p/b"], handleSingleModel, log: silentLog, comboName: "c", signal: ctrl.signal });
+    expect(out.status).toBe(499);
+    expect(tried).toEqual(["p/a"]);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it("does not start at all when the client is already gone", async () => {
