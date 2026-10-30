@@ -97,11 +97,15 @@ export const MODEL_CAPABILITIES = {
   // Fable/Mythos 5.1 reject forced tool_choice (any/tool) with 400; Fable 5 still accepts it.
   "claude-fable-5-1": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000, forcedToolChoice: false },
   "claude-mythos-5-1": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000, forcedToolChoice: false },
-  // Claude Opus 5.5 — experimental preview on Kiro (rateMultiplier: 2.0, 1M context) (#4410)
-  "claude-opus-5.5":                   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-5.5-thinking":          { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-5.5-agentic":           { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-5.5-thinking-agentic":  { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  // Claude Opus 5.5 / Sonnet 5.5 dotted ids: Kiro preview (rateMultiplier: 2.0, 1M context) (#4410),
+  // GitHub Copilot and Token Harbor. Same models as the dashed rows below, so the same 400s
+  // apply: Opus 5.5 rejects thinking.type "disabled", Sonnet 5.5 takes "between_tools" in its
+  // place, and both reject forced tool_choice (any/tool).
+  "claude-opus-5.5":                   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-opus-5.5-thinking":          { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-opus-5.5-agentic":           { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-opus-5.5-thinking-agentic":  { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-sonnet-5.5":                 { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingOffType: "between_tools", forcedToolChoice: false },
   // Opus 5.5 rejects thinking.type "disabled" and forced tool_choice (any/tool) with 400.
   "claude-opus-5-5":                   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
   "claude-opus-5-5-thinking":          { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
@@ -261,6 +265,14 @@ export const PROVIDER_CAPABILITIES = {
     // catalog overlay, so maxOutput must be stated here too).
     "claude-haiku-5-5": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
   },
+  // GitHub Copilot routes Claude to its Anthropic-native /v1/messages shim, which applies
+  // Anthropic's per-model thinking rules. claude-haiku-5.5 is adaptive-only there too: the
+  // budget shape the global *claude*haiku* pattern sends comes back 400 "thinking.type.enabled"
+  // is not supported for this model (live probe). Limits are stated because this override
+  // short-circuits the catalog overlay; they match the synced catalog's github entry.
+  "github": {
+    "claude-haiku-5.5": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  },
   // OpenCode Free (oc) — the free lane's MiMo route is OpenRouter-backed and takes
   // the plain OpenAI reasoning_effort enum verbatim (live probe on
   // oc/mimo-v2.6-flash-free: none|minimal|low|medium|high|xhigh|max all 200, any
@@ -292,6 +304,10 @@ export const PROVIDER_CAPABILITIES = {
   "codex": {
     "gpt-6.1-sol":               CODEX_GPT_5_CAPS,
     "gpt-6.1-sol-review":        CODEX_GPT_5_CAPS,
+    // codex-rs/models-manager/models.json: gpt-6.1-terra has context_window 500000 on Codex
+    // (the API model is 1.05M; Codex caps the default window like its siblings).
+    "gpt-6.1-terra":             { ...CODEX_GPT_5_CAPS, contextWindow: 500000 },
+    "gpt-6.1-terra-review":      { ...CODEX_GPT_5_CAPS, contextWindow: 500000 },
     "gpt-6-astra":               CODEX_GPT_5_CAPS,
     "gpt-6-astra-review":        CODEX_GPT_5_CAPS,
     "gpt-6-sol":                 CODEX_GPT_5_CAPS,

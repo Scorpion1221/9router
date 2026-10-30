@@ -166,6 +166,29 @@ describe("stripUnsupportedParams", () => {
     expect(body.messages[0].reasoning_content).toBe("thinking...");
   });
 
+  it("normalizes NVIDIA reasoning aliases before DeepSeek placeholder injection", () => {
+    const body = {
+      messages: [
+        { role: "assistant", content: "", reasoning: "alias", reasoning_content: "canonical" },
+        { role: "assistant", content: "", reasoning: "alias only" },
+        { role: "assistant", content: "", reasoning_content: "canonical only" },
+      ],
+    };
+
+    const transformed = new DefaultExecutor("nvidia").transformRequest(
+      "deepseek-ai/deepseek-v4-pro",
+      body,
+      true,
+      {},
+    );
+
+    expect(transformed.messages).toEqual([
+      { role: "assistant", content: "", reasoning_content: "canonical" },
+      { role: "assistant", content: "", reasoning_content: "alias only" },
+      { role: "assistant", content: "", reasoning_content: "canonical only" },
+    ]);
+  });
+
   it("drops response_format for OpenCode Go's deepseek family (both json_schema and json_object)", () => {
     const formats = [
       { type: "json_schema", json_schema: { name: "session_title", strict: true, schema: { type: "object" } } },
