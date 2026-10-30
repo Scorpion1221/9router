@@ -156,12 +156,13 @@ A Claude refresh token dies about 28 days after the login that issued it. The 4-
 rotation does not extend it, so the account has to be logged in again. The timer runs
 `oauth_expiry_watch.py` daily at 10:00 Beijing time. If an active Claude row is within 3
 days of its login time + 28 d (`reauthorizedAt`, else `createdAt`), or its access
-token has already expired, it posts one
-Feishu card. With nothing due it stays silent.
+token has already expired, it sends one Feishu card. With nothing due it stays silent.
+The card goes as a Feishu app's bot to a chat (`FEISHU_APP_ID`, `FEISHU_APP_SECRET`,
+`FEISHU_CHAT_ID`, e.g. a DM with the bot), or else to a group webhook (`FEISHU_WEBHOOK`).
 
-Install, with the webhook in a root-only env file that is not committed:
+Install, with those values in a root-only env file that is not committed:
 ```bash
-install -m 600 /dev/null /etc/9router-oauth-watch.env   # then add FEISHU_WEBHOOK=...
+install -m 600 /dev/null /etc/9router-oauth-watch.env   # then add FEISHU_APP_ID/_APP_SECRET/_CHAT_ID, or FEISHU_WEBHOOK
 cp deploy/bwg/oauth-expiry-watch.{service,timer} /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now oauth-expiry-watch.timer
 python3 deploy/bwg/oauth_expiry_watch.py --dry-run      # preview without posting

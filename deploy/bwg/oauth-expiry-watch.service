@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-# FEISHU_WEBHOOK=... (mode 600, not committed)
+# FEISHU_APP_ID/FEISHU_APP_SECRET/FEISHU_CHAT_ID (bot DM) or FEISHU_WEBHOOK; mode 600, not committed
 EnvironmentFile=/etc/9router-oauth-watch.env
 ExecStart=/usr/bin/python3 /root/9router/deploy/bwg/oauth_expiry_watch.py
 TimeoutStartSec=120

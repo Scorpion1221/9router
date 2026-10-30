@@ -15,20 +15,23 @@ whose access token has already expired go on the card too: the refresher runs 4 
 ahead, so an expired token means the refresh failed. With nothing due, no message
 is sent.
 
-The webhook comes from $FEISHU_WEBHOOK. The DB is opened read-only, and output
-carries only connection names and times.
+Delivery: with $FEISHU_APP_ID/$FEISHU_APP_SECRET/$FEISHU_CHAT_ID it is sent as that
+app's bot to the chat (e.g. a DM with the bot); otherwise to $FEISHU_WEBHOOK. The DB
+is opened read-only, and output carries only connection names and times.
 """
 import argparse
 import json
 import os
 import sqlite3
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
 DB = "/var/lib/docker/volumes/9router_9router-data/_data/db/data.sqlite"
 LIFETIME = {"claude": timedelta(days=28)}
 CST = timezone(timedelta(hours=8))
+FEISHU_API = "https://open.feishu.cn/open-apis"
 
 
 def ts(v):
@@ -81,14 +84,34 @@ def card(dead, due, now):
     }
 
 
-def post(url, body):
-    request = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode(),
-                                     headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=15) as response:
-        reply = json.loads(response.read() or b"{}")
+def post_json(url, body, token=None):
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    request = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode(), headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            reply = json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as exc:  # Feishu answers API errors with a JSON body too
+        reply = json.loads(exc.read() or b"{}")
     code = reply.get("code", reply.get("StatusCode", 0))
     if code != 0:
-        raise RuntimeError("feishu rejected the card: code %s %s" % (code, reply.get("msg")))
+        raise RuntimeError("feishu rejected the request: code %s %s" % (code, reply.get("msg")))
+    return reply
+
+
+def send(card_body):
+    """As the app bot to FEISHU_CHAT_ID when FEISHU_APP_ID is set, else to FEISHU_WEBHOOK."""
+    if os.environ.get("FEISHU_APP_ID"):
+        token = post_json(FEISHU_API + "/auth/v3/tenant_access_token/internal", {
+            "app_id": os.environ["FEISHU_APP_ID"], "app_secret": os.environ["FEISHU_APP_SECRET"],
+        })["tenant_access_token"]
+        post_json(FEISHU_API + "/im/v1/messages?receive_id_type=chat_id", {
+            "receive_id": os.environ["FEISHU_CHAT_ID"], "msg_type": "interactive",
+            "content": json.dumps(card_body, ensure_ascii=False),
+        }, token)
+    else:
+        post_json(os.environ["FEISHU_WEBHOOK"], {"msg_type": "interactive", "card": card_body})
 
 
 def main():
@@ -103,19 +126,17 @@ def main():
     print(json.dumps({"dead": [n for n, _ in dead], "due": [n for n, _ in due]}, ensure_ascii=False))
     if not (dead or due):
         return 0
-    body = {"msg_type": "interactive", "card": card(dead, due, now)}
+    body = card(dead, due, now)
     if args.dry_run:
         print(json.dumps(body, ensure_ascii=False, indent=1))
         return 0
-    url = os.environ.get("FEISHU_WEBHOOK")
-    if not url:
-        print("FEISHU_WEBHOOK is not set", file=sys.stderr)
-        return 2
     try:
-        post(url, body)
-    except Exception as exc:  # never echo the webhook URL
-        print("feishu post failed: %s: %s" % (type(exc).__name__, str(exc).replace(url, "<redacted>")),
-              file=sys.stderr)
+        send(body)
+    except Exception as exc:  # never echo the webhook URL or app secret
+        msg = str(exc)
+        for secret in filter(None, (os.environ.get("FEISHU_WEBHOOK"), os.environ.get("FEISHU_APP_SECRET"))):
+            msg = msg.replace(secret, "<redacted>")
+        print("feishu send failed: %s: %s" % (type(exc).__name__, msg), file=sys.stderr)
         return 2
     return 0
 
