@@ -1,0 +1,16 @@
+[Unit]
+Description=Remind on Feishu before 9router Claude OAuth logins expire
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# FEISHU_WEBHOOK=... (mode 600, not committed)
+EnvironmentFile=/etc/9router-oauth-watch.env
+ExecStart=/usr/bin/python3 /root/9router/deploy/bwg/oauth_expiry_watch.py
+TimeoutStartSec=120
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+# Not "strict": a read-only SQLite reader on a WAL database still writes the -shm file.
+ProtectSystem=full

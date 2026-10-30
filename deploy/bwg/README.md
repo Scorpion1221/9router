@@ -21,6 +21,7 @@ stopping it.
 | `rollout.sh` | `deploy` (default), `status`, `rollback`, `migrate` (one-time) |
 | `oauth_handover.py` | `due`: minutes until the next single-use OAuth refresh. Gates every overlap of two instances. Also used by the original host move. |
 | `rollout.env.example` | Host settings. Copy to `rollout.env` (git-ignored). `SITES` is required. |
+| `oauth_expiry_watch.py` + `oauth-expiry-watch.{service,timer}` | Daily Feishu reminder, 3 days before a Claude OAuth login reaches ~28 days (see below). |
 
 ## Layout on the host
 
@@ -148,6 +149,22 @@ Start from green live and no blue container. If blue is live, run `rollout.sh ro
    docker stop -t 1500 9router-green
    docker rm 9router-green
    ```
+
+## Claude login expiry reminder
+
+A Claude refresh token dies about 28 days after the login that issued it. The 4-hourly
+rotation does not extend it, so the account has to be logged in again. The timer runs
+`oauth_expiry_watch.py` daily at 10:00 Beijing time. If an active Claude row is within 3
+days of `createdAt` + 28 d, or its access token has already expired, it posts one
+Feishu card. With nothing due it stays silent.
+
+Install, with the webhook in a root-only env file that is not committed:
+```bash
+install -m 600 /dev/null /etc/9router-oauth-watch.env   # then add FEISHU_WEBHOOK=...
+cp deploy/bwg/oauth-expiry-watch.{service,timer} /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now oauth-expiry-watch.timer
+python3 deploy/bwg/oauth_expiry_watch.py --dry-run      # preview without posting
+```
 
 ## Known limits
 
