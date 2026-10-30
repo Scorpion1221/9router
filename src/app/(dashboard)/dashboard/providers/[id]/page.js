@@ -1998,7 +1998,8 @@ export default function ProviderDetailPage() {
           provider={providerId}
           providerInfo={providerInfo}
           reauthConnection={reauthConnection}
-          onSuccess={handleOAuthSuccess}
+          // Refresh only: the modal shows its success view and closes on Done.
+          onSuccess={fetchConnections}
           onClose={() => { setShowOAuthModal(false); setReauthConnection(null); }}
         />
       )}

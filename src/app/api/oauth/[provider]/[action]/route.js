@@ -50,6 +50,12 @@ import { ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 // Claude rows carry no email, so a plain login can't find its old row and adds a new one.
 const REAUTH_PROVIDERS = new Set(["claude"]);
 
+// Each attempt pairs one authorize URL with one PKCE verifier, and a code is single-use and
+// short-lived, so a code from an older sign-in tab, or one pasted twice, is refused.
+const STALE_CODE_MESSAGE =
+  "This sign-in code no longer matches this login. It came from an older sign-in tab, was already used, or expired. "
+  + "Close the other sign-in tabs, click Try Again, and finish in the newest tab only.";
+
 async function completeXaiManualCode(code, state) {
   const session = state ? getXaiSessionStatus(state) : null;
   if (!session) {
@@ -670,6 +676,11 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.log("OAuth POST error:", error);
+    // A pasted code the provider refuses (stale, used, or from another login attempt) is
+    // the user's to redo, not a server fault.
+    if (/invalid_grant/.test(error.message)) {
+      return NextResponse.json({ error: STALE_CODE_MESSAGE }, { status: 400 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

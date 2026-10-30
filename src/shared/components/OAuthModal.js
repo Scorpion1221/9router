@@ -47,6 +47,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const [authMode, setAuthMode] = useState("browser"); // "browser" | "paste-token"
   const [pasteToken, setPasteToken] = useState("");
   const [ideStatus, setIdeStatus] = useState(null);
+  // Reset the step during the render that reopens the modal; resetting in an effect
+  // paints the last session's step (often "success") for a frame first.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) setStep("waiting");
+  }
   const popupRef = useRef(null);
   const pollingAbortRef = useRef(false);
   const openedRef = useRef(false);

@@ -132,6 +132,27 @@ describe("POST /api/oauth/claude/exchange with connectionId", () => {
     expect(created).toHaveLength(0);
   });
 
+  it("answers a refused (stale or reused) code with 400 and a way out, not 500", async () => {
+    tokenData.mockImplementation(() => {
+      throw new Error('Token exchange failed: {"error": "invalid_grant", "error_description": "Code challenge failed."}');
+    });
+    const res = await exchange({ connectionId: "row-1" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/newest tab/);
+    expect(rows.get("row-1").refreshToken).toBe("rt-old");
+    tokenData.mockReset();
+  });
+
+  it("keeps other exchange failures as 500 with their message", async () => {
+    tokenData.mockImplementation(() => { throw new Error("Token exchange failed: upstream down"); });
+    const res = await exchange({});
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("upstream down");
+    tokenData.mockReset();
+  });
+
   it("still adds a new row when no connectionId is sent", async () => {
     tokenData.mockReturnValue(tokens("acct-shasha", "shasha@x.ai"));
     const res = await exchange({});
