@@ -165,6 +165,36 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
 
 // Free "limit reset" grants (Anthropic program id "cedar_ember").
 // Shape: { eligible, next_grant_id, grants: [{ id, resets_left, ends_at, paused, clears }] }
+/**
+ * The account behind a Claude OAuth token, from /api/oauth/profile. Fills the
+ * identity of connections created before logins recorded it. Null on any failure.
+ */
+export async function getClaudeAccountIdentity(accessToken, proxyOptions = null) {
+  if (!accessToken) return null;
+  try {
+    const res = await proxyAwareFetch(CLAUDE_CONFIG.profileUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        "anthropic-version": CLAUDE_CONFIG.apiVersion,
+        "User-Agent": CLAUDE_CONFIG.userAgent,
+      },
+      signal: AbortSignal.timeout(10000),
+    }, proxyOptions);
+    if (!res.ok) return null;
+    const profile = await res.json().catch(() => null);
+    if (!profile?.account?.uuid) return null;
+    return {
+      accountUuid: profile.account.uuid,
+      accountEmail: profile.account.email || profile.account.email_address || null,
+      organizationUuid: profile.organization?.uuid || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function parseClaudeResetGrants(block) {
   if (!block?.eligible || !Array.isArray(block.grants)) return null;
   const now = Date.now();

@@ -60,6 +60,7 @@ export default function ProviderDetailPage() {
   const [providerNode, setProviderNode] = useState(null);
   const [proxyPools, setProxyPools] = useState([]);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
+  const [reauthConnection, setReauthConnection] = useState(null);
   const [showXiaomiMimoModal, setShowXiaomiMimoModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
@@ -852,6 +853,7 @@ export default function ProviderDetailPage() {
   const handleOAuthSuccess = () => {
     fetchConnections();
     setShowOAuthModal(false);
+    setReauthConnection(null);
   };
 
   const handleIFlowCookieSuccess = () => {
@@ -1606,6 +1608,7 @@ export default function ProviderDetailPage() {
             scheduleSummary: getScheduleSlotLabels(autoPing.schedules?.[conn.id]).join(" / "),
           } : null) : null}
           onConfigureAutoPing={(conn) => setScheduleConnection(conn)}
+          onReauthorize={providerId === "claude" ? (conn) => { setReauthConnection(conn); setShowOAuthModal(true); } : null}
           proxyPools={proxyPools}
           onUpdateProxy={updateConnectionProxy}
           oneByOneResults={oneByOneResults}
@@ -1994,8 +1997,9 @@ export default function ProviderDetailPage() {
           isOpen={showOAuthModal}
           provider={providerId}
           providerInfo={providerInfo}
+          reauthConnection={reauthConnection}
           onSuccess={handleOAuthSuccess}
-          onClose={() => setShowOAuthModal(false)}
+          onClose={() => { setShowOAuthModal(false); setReauthConnection(null); }}
         />
       )}
 

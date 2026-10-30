@@ -4,12 +4,13 @@ A Claude refresh token stops working about 28 days after the login that issued i
 Rotating it every 4 hours does not extend that; only a fresh login does. On prod,
 two logins from 2026-09-30 died at 27.8-28.3 days with invalid_grant.
 
-Claude rows carry no email, so every login creates a new row. That makes createdAt
-the login time.
+The login time is reauthorizedAt, which the dashboard's Re-authorize sets in place.
+A row that was never re-authorized uses createdAt instead: Claude rows carry no
+email, so every plain login creates a new row.
 
   oauth_expiry_watch.py [--db DB] [--warn-days N] [--dry-run]
 
-Posts one card if an active row is within --warn-days of createdAt + 28 days. Rows
+Posts one card if an active row is within --warn-days of its login time + 28 days. Rows
 whose access token has already expired go on the card too: the refresher runs 4 h
 ahead, so an expired token means the refresh failed. With nothing due, no message
 is sent.
@@ -41,16 +42,17 @@ def cst(t):
 def scan(db_path, warn, now):
     db = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
     rows = db.execute(
-        "select provider, name, createdAt, json_extract(data, '$.expiresAt') from providerConnections"
+        "select provider, name, coalesce(json_extract(data, '$.reauthorizedAt'), createdAt),"
+        " json_extract(data, '$.expiresAt') from providerConnections"
         " where authType = 'oauth' and isActive = 1 and provider in (%s) order by createdAt"
         % ",".join("?" * len(LIFETIME)), list(LIFETIME)).fetchall()
     dead, due = [], []
-    for provider, name, created, expires_at in rows:
+    for provider, name, logged_in, expires_at in rows:
         expires_at = ts(expires_at)
         if expires_at and expires_at < now:
             dead.append((name, expires_at))
-        elif ts(created) + LIFETIME[provider] - now <= warn:
-            due.append((name, ts(created) + LIFETIME[provider]))
+        elif ts(logged_in) + LIFETIME[provider] - now <= warn:
+            due.append((name, ts(logged_in) + LIFETIME[provider]))
     return dead, due
 
 
@@ -64,7 +66,7 @@ def card(dead, due, now):
             f"- {n}：约 {cst(t)}（剩 {max(0, (t - now).total_seconds()) / 86400:.1f} 天）" for n, t in due)},
             {"tag": "hr"}]
     elements += [
-        {"tag": "markdown", "content": "处理：Dashboard → Providers → Claude，删掉旧连接后重新登录。"
+        {"tag": "markdown", "content": "处理：Dashboard → Providers → Claude，在该账号的 ⋯ 菜单里点 Re-authorize。"
                                        "自动刷新不会延长 28 天，只有重新登录才重新计时。"},
         {"tag": "markdown", "content": f"<font color='grey'>9router · 检查于 {cst(now)}（北京时间） · 每天一次</font>",
          "text_size": "notation"},

@@ -163,6 +163,7 @@
 .qcl .meta .sep{opacity:.55}
 .qcl .meta .ms{font-size:13px;margin-right:-2px}
 .qcl .meta [data-tip]{cursor:help}
+.qcl .meta .email{overflow:hidden;text-overflow:ellipsis;min-width:0}
 
 /* status chip */
 .qcl .chip{display:inline-flex;align-items:center;gap:7px;height:24px;max-width:calc(100% - 28px);padding:0 9px 0 8px;border-radius:7px;background:color-mix(in srgb,var(--tone) 12%,transparent);font-size:12px;white-space:nowrap;overflow:hidden}

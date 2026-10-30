@@ -155,7 +155,8 @@ Start from green live and no blue container. If blue is live, run `rollout.sh ro
 A Claude refresh token dies about 28 days after the login that issued it. The 4-hourly
 rotation does not extend it, so the account has to be logged in again. The timer runs
 `oauth_expiry_watch.py` daily at 10:00 Beijing time. If an active Claude row is within 3
-days of `createdAt` + 28 d, or its access token has already expired, it posts one
+days of its login time + 28 d (`reauthorizedAt`, else `createdAt`), or its access
+token has already expired, it posts one
 Feishu card. With nothing due it stays silent.
 
 Install, with the webhook in a root-only env file that is not committed:

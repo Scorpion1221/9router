@@ -7,7 +7,7 @@ import {
   requestDeviceCode,
   pollForToken
 } from "@/lib/oauth/providers";
-import { createProviderConnection } from "@/models";
+import { createProviderConnection, getProviderConnectionById, updateProviderConnection } from "@/models";
 import { getProviderConnections } from "@/lib/localDb";
 import { requestLease, requestStatus, resolveLeaseEndpoint, resolveMcodeDataDir, AuthLeaseError } from "open-sse/services/minimaxCodeLease.js";
 import { readDesktopPassToken } from "open-sse/shared/mimoAccount.js";
@@ -45,6 +45,10 @@ import {
 } from "@/lib/oauth/utils/server";
 import { detectIdeInstalled } from "@/lib/oauth/utils/ideDetect";
 import { ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
+
+// Providers whose exchange can re-authorize an existing connection (body.connectionId).
+// Claude rows carry no email, so a plain login can't find its old row and adds a new one.
+const REAUTH_PROVIDERS = new Set(["claude"]);
 
 async function completeXaiManualCode(code, state) {
   const session = state ? getXaiSessionStatus(state) : null;
@@ -527,14 +531,52 @@ export async function POST(request, { params }) {
         ...(systemId ? { systemId } : {}),
       });
 
+      const expiresAt = tokenData.expiresIn
+        ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
+        : null;
+
+      // Re-authorize an existing connection in place: keep its id, name, priority,
+      // proxy and pool policy; only the credentials change.
+      if (body.connectionId) {
+        if (!REAUTH_PROVIDERS.has(provider)) {
+          return NextResponse.json({ error: `Re-authorize is not supported for ${provider}` }, { status: 400 });
+        }
+        const existing = await getProviderConnectionById(String(body.connectionId));
+        if (!existing || existing.provider !== provider || existing.authType !== "oauth") {
+          return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+        }
+        const before = existing.providerSpecificData || {};
+        const after = tokenData.providerSpecificData || {};
+        if (before.accountUuid && after.accountUuid && before.accountUuid !== after.accountUuid) {
+          return NextResponse.json({
+            error: `This login is ${after.accountEmail || "a different account"}, but "${existing.name}" is ${before.accountEmail || "another account"}. Sign in with the matching account, or add it as a new connection.`,
+          }, { status: 409 });
+        }
+        const connection = await updateProviderConnection(existing.id, {
+          accessToken: tokenData.accessToken,
+          refreshToken: tokenData.refreshToken,
+          expiresIn: tokenData.expiresIn,
+          expiresAt,
+          scope: tokenData.scope,
+          lastRefreshAt: new Date().toISOString(),
+          // Restart the login-age clock that oauth_expiry_watch.py reads.
+          reauthorizedAt: new Date().toISOString(),
+          providerSpecificData: { ...before, ...after },
+          testStatus: "active",
+        });
+        return NextResponse.json({
+          success: true,
+          reauthorized: true,
+          connection: { id: connection.id, provider: connection.provider, name: connection.name },
+        });
+      }
+
       // Save to database
       const connection = await createProviderConnection({
         provider,
         authType: "oauth",
         ...tokenData,
-        expiresAt: tokenData.expiresIn 
-          ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString() 
-          : null,
+        expiresAt,
         testStatus: "active",
       });
 

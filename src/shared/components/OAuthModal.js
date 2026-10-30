@@ -35,7 +35,7 @@ const PASTE_TOKEN_PROVIDERS = {
  * - Localhost: Auto callback via popup message
  * - Remote: Manual paste callback URL
  */
-export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, onClose, oauthMeta, idcConfig }) {
+export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, onClose, oauthMeta, idcConfig, reauthConnection }) {
   const [step, setStep] = useState("waiting"); // waiting | input | success | error
   const [authData, setAuthData] = useState(null);
   const [callbackUrl, setCallbackUrl] = useState("");
@@ -98,6 +98,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           // connection keeps the id sent to zed.dev (see register-session).
           ...(authData.systemId ? { systemId: authData.systemId } : {}),
           ...(oauthMeta ? { meta: oauthMeta } : {}),
+          ...(reauthConnection ? { connectionId: reauthConnection.id } : {}),
         }),
       });
 
@@ -110,7 +111,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(err.message);
       setStep("error");
     }
-  }, [authData, provider, oauthMeta]);
+  }, [authData, provider, oauthMeta, reauthConnection]);
 
   const completeXaiManualCode = useCallback(async (code) => {
     if (!authData?.state) return;
@@ -754,7 +755,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const isXaiProvider = provider === "xai";
   const isKimchiProvider = provider === "kimchi";
   const deviceLoginUrl = deviceData?.verification_uri_complete || deviceData?.verification_uri || "";
-  const modalTitle = isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
+  const modalTitle = reauthConnection
+    ? `Re-authorize ${reauthConnection.name || providerInfo.name}`
+    : isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
   const manualPlaceholder = isXaiProvider
     ? "http://127.0.0.1:56121/callback?code=... or copied code"
     : isKimchiProvider
@@ -964,9 +967,11 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
             <div className="size-16 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
               <span className="material-symbols-outlined text-3xl text-green-600">check_circle</span>
             </div>
-            <h3 className="text-lg font-semibold mb-2">Connected Successfully!</h3>
+            <h3 className="text-lg font-semibold mb-2">{reauthConnection ? "Re-authorized" : "Connected Successfully!"}</h3>
             <p className="text-sm text-text-muted mb-4">
-              Your {providerInfo.name} account has been connected.
+              {reauthConnection
+                ? `${reauthConnection.name || providerInfo.name} has fresh credentials; its settings were kept.`
+                : `Your ${providerInfo.name} account has been connected.`}
             </p>
             <Button onClick={handleClose} fullWidth>
               Done
@@ -1005,6 +1010,8 @@ OAuthModal.propTypes = {
   onClose: PropTypes.func.isRequired,
   /** Extra metadata passed to /authorize and /exchange (e.g. gitlab clientId/baseUrl) */
   oauthMeta: PropTypes.object,
+  /** Re-authorize this connection in place instead of adding a new one (claude) */
+  reauthConnection: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string }),
   /** Optional Kiro IDC config for AWS IAM Identity Center device flow */
   idcConfig: PropTypes.shape({
     startUrl: PropTypes.string,

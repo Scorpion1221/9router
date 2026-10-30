@@ -54,6 +54,13 @@ const claude = {
     refreshToken: tokens.refresh_token,
     expiresIn: tokens.expires_in,
     scope: tokens.scope,
+    // Which account/org this login belongs to, so a re-authorization can refuse
+    // a different one. Kept out of `email`, which would change connection dedup.
+    providerSpecificData: {
+      accountUuid: tokens.account?.uuid || null,
+      accountEmail: tokens.account?.email_address || tokens.account?.email || null,
+      organizationUuid: tokens.organization?.uuid || null,
+    },
   }),
 };
 

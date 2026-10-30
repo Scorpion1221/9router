@@ -94,7 +94,7 @@ export default function QuotaConnectionList({
   providerId, connections, strategyOverride, onStrategyChange, isSelected, onToggleSelect, onSelectAll, onClearSelection,
   onReorder, onToggleActive, onEdit, onDelete, onTest, onTestAll, onStopTestAll, testAllRunning, testAllSummary,
   onBulkDelete, onBulkProxy, onBulkToggle, autoPingFor, onConfigureAutoPing, proxyPools, onUpdateProxy, oneByOneResults,
-  onAdd, extraAddButtons,
+  onAdd, extraAddButtons, onReauthorize,
 }) {
   const { view, error, reload } = usePoolView(providerId, connections, strategyOverride);
   const now = useNow();
@@ -246,6 +246,7 @@ export default function QuotaConnectionList({
   const nameCell = (a) => {
     const ap = autoPingFor ? autoPingFor(a.conn) : null;
     const pool = a.conn.providerSpecificData?.proxyPoolId;
+    const email = a.conn.providerSpecificData?.accountEmail;
     return (
       <>
         <div className="nm">
@@ -256,7 +257,11 @@ export default function QuotaConnectionList({
         </div>
         <div className="meta">
           <Tip text={`Priority ${a.priority} (your drag order)`}>#{a.priority}</Tip>
-          <span className="sep">·</span><span>{a.conn.authType === "oauth" ? "OAuth" : "API key"}</span>
+          <span className="sep">·</span>
+          {/* The login's account (implies OAuth); unless the name already is it. */}
+          {email && email !== a.name
+            ? <span className="email" title={`OAuth · ${email}`}>{email}</span>
+            : <span>{a.conn.authType === "oauth" ? "OAuth" : "API key"}</span>}
           {ap?.on && <><span className="sep">·</span><span><Ic name="bolt" className="fill" /> Auto-ping</span></>}
           {pool && <><span className="sep">·</span><span>Proxy</span></>}
         </div>
@@ -338,6 +343,7 @@ export default function QuotaConnectionList({
       <div className="menu" role="menu" onClick={(e) => e.stopPropagation()}>
         <button className="mi" type="button" role="menuitem" onClick={() => runTest(a)}><Ic name="network_check" />Test connection</button>
         <button className="mi" type="button" role="menuitem" onClick={() => refreshQuota(a)}><Ic name="refresh" />Refresh quota</button>
+        {onReauthorize && <button className="mi" type="button" role="menuitem" onClick={() => { setMenuFor(null); onReauthorize(a.conn); }}><Ic name="key" />Re-authorize</button>}
         {pools.length > 0 && (
           <>
             <button className="mi" type="button" role="menuitem" onClick={() => { setMenuFor(null); onUpdateProxy(a.id, null); }}><Ic name="lan" />No proxy{!bound && <span className="r">current</span>}</button>
@@ -698,4 +704,5 @@ QuotaConnectionList.propTypes = {
   oneByOneResults: PropTypes.object,
   onAdd: PropTypes.func.isRequired,
   extraAddButtons: PropTypes.node,
+  onReauthorize: PropTypes.func,
 };

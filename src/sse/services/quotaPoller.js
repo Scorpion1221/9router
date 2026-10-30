@@ -121,6 +121,27 @@ async function defaultPollOne(conn) {
   ({ connection: fresh } = await refreshAndUpdateCredentials(fresh, false, proxyOptions));
   const usage = await getUsageForProvider(fresh, proxyOptions);
   await applyQuotaReading(fresh, usage);
+  await backfillClaudeIdentity(fresh, proxyOptions);
+}
+
+/**
+ * Claude rows created before logins recorded the account get it from the profile
+ * endpoint once, so the dashboard can show the email and Re-authorize can check
+ * it. Rows that already have it are skipped, so this costs one call per row ever.
+ */
+export async function backfillClaudeIdentity(conn, proxyOptions, deps = {}) {
+  if (conn?.provider !== "claude" || !conn.accessToken || conn.providerSpecificData?.accountUuid) return false;
+  const fetchIdentity = deps.fetchIdentity
+    || (await import("open-sse/services/usage/claude.js")).getClaudeAccountIdentity;
+  const identity = await fetchIdentity(conn.accessToken, proxyOptions);
+  if (!identity) return false;
+  const update = deps.updateProviderConnectionWith
+    || (await import("../../lib/db/repos/connectionsRepo.js")).updateProviderConnectionWith;
+  // Merge into the current row: a request may have changed providerSpecificData since the read.
+  await update(conn.id, (current) => (current.providerSpecificData?.accountUuid ? null
+    : { providerSpecificData: { ...(current.providerSpecificData || {}), ...identity } }));
+  log.info("QUOTA", `${conn.name || conn.id.slice(0, 8)} is ${identity.accountEmail || identity.accountUuid}`);
+  return true;
 }
 
 async function defaultLoad() {
