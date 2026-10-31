@@ -91,9 +91,33 @@ const REFRESH_GRANTS = Object.fromEntries(
     })
 );
 
+// Bedrock-backed gateways reject Claude Desktop's deferred tools: the gateway itself adds
+// the tool-search beta for them, and Bedrock answers 400 with this text.
+const DEFERRED_TOOLS_REJECTED = /unsupported beta header\(s\)[^"]*tool-search-tool/i;
+
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
+  }
+
+  // When an anthropic-compatible gateway rejects deferred tool loading, resend once
+  // with every tool loaded up front. Costs one extra round trip plus the deferred
+  // tools' definitions as input tokens, only for that turn.
+  async execute(args) {
+    const result = await super.execute(args);
+    const tools = args.body?.tools;
+    if (result.response?.status !== 400
+      || !this.provider?.startsWith?.("anthropic-compatible-")
+      || !Array.isArray(tools) || !tools.some((t) => t?.defer_loading === true)) return result;
+    const errorText = await result.response.clone().text().catch(() => "");
+    if (!DEFERRED_TOOLS_REJECTED.test(errorText)) return result;
+    args.log?.warn?.("DEFERRED_TOOLS", `${this.provider} rejected deferred tools; resending ${tools.length} tools without defer_loading`);
+    const eagerTools = tools.map((t) => {
+      if (t?.defer_loading !== true) return t;
+      const { defer_loading, ...rest } = t;
+      return rest;
+    });
+    return super.execute({ ...args, body: { ...args.body, tools: eagerTools } });
   }
 
   transformRequest(model, body, stream, credentials) {
