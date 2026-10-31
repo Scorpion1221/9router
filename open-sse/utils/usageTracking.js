@@ -17,8 +17,13 @@ export const COLORS = {
   cyan: "\x1b[36m"
 };
 
-// Buffer tokens to prevent context errors
-const BUFFER_TOKENS = 2000;
+// Padding added to the input count reported back to the client (not stored), so a
+// client compacting near the context limit keeps a margin. 0 reports the upstream
+// numbers as-is. Env: USAGE_BUFFER_TOKENS.
+const BUFFER_TOKENS = (() => {
+  const n = parseInt(process.env.USAGE_BUFFER_TOKENS ?? "", 10);
+  return Number.isFinite(n) && n >= 0 ? n : 2000;
+})();
 
 // Get HH:MM:SS timestamp
 function getTimeString() {
