@@ -1,4 +1,4 @@
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, FETCH_NONSTREAM_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, FETCH_NONSTREAM_TIMEOUT_MS, HEADER_TIMEOUT_MARKER } from "../config/runtimeConfig.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
@@ -85,6 +85,12 @@ export class BaseExecutor {
     return status === HTTP_STATUS.RATE_LIMITED && urlIndex + 1 < this.getFallbackCount();
   }
 
+  // How long to wait for response headers. Streaming upstreams send headers as soon as
+  // they start; stream:false ones only after the whole generation.
+  connectTimeoutMs(stream) {
+    return stream ? FETCH_CONNECT_TIMEOUT_MS : FETCH_NONSTREAM_TIMEOUT_MS;
+  }
+
   // Override in subclass for provider-specific refresh
   async refreshCredentials(credentials, log, proxyOptions = null) {
     return null;
@@ -149,7 +155,7 @@ export class BaseExecutor {
 
       // Abort if upstream doesn't return response headers within connection timeout
       const connectCtrl = new AbortController();
-      const timeoutMs = this.config?.timeoutMs || (stream ? FETCH_CONNECT_TIMEOUT_MS : FETCH_NONSTREAM_TIMEOUT_MS);
+      const timeoutMs = this.config?.timeoutMs || this.connectTimeoutMs(stream);
       const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 
@@ -193,7 +199,7 @@ export class BaseExecutor {
         if (headersTimedOut) {
           // The upstream took the request and may still be generating (and billing):
           // replaying it on the same URL only repeats that. Move on instead.
-          lastError = new Error(`fetch connect timeout: no response headers within ${timeoutMs}ms (stream=${!!stream})`, { cause: error });
+          lastError = new Error(`fetch connect timeout: ${HEADER_TIMEOUT_MARKER} ${timeoutMs}ms (stream=${!!stream})`, { cause: error });
           if (urlIndex + 1 < fallbackCount) continue;
           throw lastError;
         }

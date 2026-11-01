@@ -19,7 +19,7 @@ import { upstreamResponseHeaders } from "open-sse/utils/upstreamHeaders.js";
 import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
-import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
+import { HTTP_STATUS, HEADER_TIMEOUT_MARKER } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import { resolveSessionIdentity } from "open-sse/utils/sessionManager.js";
 import * as log from "../utils/logger.js";
@@ -501,6 +501,20 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
 
     if (result.success) return result.response;
+
+    // A gateway header timeout says this request was slow (a cold multi-hundred-k prompt
+    // can take longer to prefill than the timeout), not that the node is unhealthy.
+    // Skip it for this request only: a gateway node has one account, so a lock would
+    // fail every other request routed to it for the whole cooldown.
+    if (provider?.startsWith?.("anthropic-compatible-") && result.status === HTTP_STATUS.BAD_GATEWAY
+      && String(result.error).includes(HEADER_TIMEOUT_MARKER)) {
+      log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} header timeout → NEXT ACCOUNT (not locked)`);
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = result.error;
+      lastStatus = result.status;
+      lastHeaders = upstreamResponseHeaders(result.response?.headers);
+      continue;
+    }
 
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;

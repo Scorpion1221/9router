@@ -65,6 +65,16 @@ export const EMPTY_PEEK_DEADLINE_MS = envMs("EMPTY_PEEK_DEADLINE_MS", 5 * 1000);
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
 
+// anthropic-compatible gateways (a relay in front of Claude/Bedrock) hold response headers
+// until prefill is done, and their prompt cache is separate from the subscription accounts',
+// so a fallback request arrives cold: ~730k tokens took 68–82s to the first header on
+// 2026-11-01. Env: FETCH_GATEWAY_CONNECT_TIMEOUT_MS.
+export const FETCH_GATEWAY_CONNECT_TIMEOUT_MS = envMs("FETCH_GATEWAY_CONNECT_TIMEOUT_MS", 150 * 1000);
+
+// Text the executor puts in a header-timeout error; the account walk reads it to tell a
+// slow request from an unhealthy account.
+export const HEADER_TIMEOUT_MARKER = "no response headers within";
+
 // stream:false upstreams only send headers once the whole generation is done, so
 // they get a longer header budget. Kept under undici's built-in 300s headersTimeout
 // (no dispatcher here overrides it) and under Claude Code's ~340s client timeout.

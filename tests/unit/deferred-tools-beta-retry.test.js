@@ -83,3 +83,14 @@ describe("anthropic-compatible: deferred-tools beta rejection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("header timeout per provider", () => {
+  it("gives anthropic-compatible gateways the longer streaming header budget", async () => {
+    const { FETCH_CONNECT_TIMEOUT_MS, FETCH_GATEWAY_CONNECT_TIMEOUT_MS, FETCH_NONSTREAM_TIMEOUT_MS } = await import("../../open-sse/config/runtimeConfig.js");
+    expect(FETCH_GATEWAY_CONNECT_TIMEOUT_MS).toBeGreaterThan(FETCH_CONNECT_TIMEOUT_MS);
+    expect(new DefaultExecutor("anthropic-compatible-test").connectTimeoutMs(true)).toBe(FETCH_GATEWAY_CONNECT_TIMEOUT_MS);
+    expect(new DefaultExecutor("anthropic-compatible-test").connectTimeoutMs(false)).toBe(FETCH_NONSTREAM_TIMEOUT_MS);
+    expect(new DefaultExecutor("openai").connectTimeoutMs(true)).toBe(FETCH_CONNECT_TIMEOUT_MS);
+    expect(new DefaultExecutor("claude").connectTimeoutMs(true)).toBe(FETCH_CONNECT_TIMEOUT_MS);
+  });
+});

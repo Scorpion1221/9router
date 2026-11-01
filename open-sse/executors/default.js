@@ -10,6 +10,7 @@ import { refreshProviderCredentials } from "../services/oauthCredentialManager.j
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { normalizeMaxCompletionTokens, stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
+import { FETCH_GATEWAY_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -98,6 +99,12 @@ const DEFERRED_TOOLS_REJECTED = /unsupported beta header\(s\)[^"]*tool-search-to
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
+  }
+
+  // Gateways answer cold-cache fallbacks only after a long prefill.
+  connectTimeoutMs(stream) {
+    if (stream && this.provider?.startsWith?.("anthropic-compatible-")) return FETCH_GATEWAY_CONNECT_TIMEOUT_MS;
+    return super.connectTimeoutMs(stream);
   }
 
   // When an anthropic-compatible gateway rejects deferred tool loading, resend once

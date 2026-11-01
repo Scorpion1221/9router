@@ -14,7 +14,7 @@ vi.mock("@/lib/localDb", () => ({
   getSettings: async () => ({ requireApiKey: false, comboStrategy: "fallback" }),
   getModelAliases: async () => ({}),
   getComboByName: async () => null,
-  getProviderNodes: async () => [],
+  getProviderNodes: async ({ type } = {}) => (type === "anthropic-compatible" ? [{ id: "anthropic-compatible-gw1", prefix: "e2egwnode" }] : []),
   getCombos: async () => [],
   getProviderConnections: async () => [],
   getProviderConnectionById: async () => null,
@@ -42,11 +42,11 @@ const { handleChat } = await import("../../src/sse/handlers/chat.js");
 const account = (n) => ({ connectionId: `c${n}`, connectionName: `acc${n}`, accessToken: "t", providerSpecificData: {} });
 const failure = (status) => ({ success: false, status, error: "boom", response: new Response("{}", { status }) });
 
-function request(signal) {
+function request(signal, model = "openai/gpt-x") {
   return new Request("http://localhost/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "openai/gpt-x", messages: [{ role: "user", content: "hi" }] }),
+    body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }] }),
     signal,
   });
 }
@@ -100,5 +100,51 @@ describe("handleSingleModelChat — client disconnect", () => {
     expect(out.status).toBe(200);
     expect(mocks.markAccountUnavailable).toHaveBeenCalledTimes(1);
     expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("handleSingleModelChat — upstream header timeout", () => {
+  const timedOut = () => ({
+    success: false, status: 502,
+    error: "[502]: fetch connect timeout: no response headers within 150000ms (stream=true) (cause: fetch connect timeout)",
+    response: new Response("{}", { status: 502 }),
+  });
+
+  it("gateway node: moves on without locking the slow account", async () => {
+    mocks.handleChatCore
+      .mockResolvedValueOnce(timedOut())
+      .mockResolvedValueOnce({ success: true, response: new Response("ok", { status: 200 }) });
+
+    const out = await handleChat(request(new AbortController().signal, "e2egwnode/claude-opus-5-5"));
+
+    expect(out.status).toBe(200);
+    expect(mocks.getProviderCredentials.mock.calls[0][0]).toBe("anthropic-compatible-gw1");
+    expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
+    expect([...mocks.getProviderCredentials.mock.calls[1][1]]).toEqual(["c1"]);
+  });
+
+  it("gateway node: reports the timeout when no account is left", async () => {
+    mocks.getProviderCredentials.mockReset()
+      .mockResolvedValueOnce(account(1))
+      .mockResolvedValueOnce(null);
+    mocks.handleChatCore.mockResolvedValueOnce(timedOut());
+
+    const out = await handleChat(request(new AbortController().signal, "e2egwnode/claude-opus-5-5"));
+
+    expect(out.status).toBe(502);
+    expect(await out.text()).toContain("no response headers");
+    expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+  });
+
+  it("other providers still lock the account on a header timeout", async () => {
+    mocks.handleChatCore
+      .mockResolvedValueOnce(timedOut())
+      .mockResolvedValueOnce({ success: true, response: new Response("ok", { status: 200 }) });
+
+    const out = await handleChat(request(new AbortController().signal));
+
+    expect(out.status).toBe(200);
+    expect(mocks.markAccountUnavailable).toHaveBeenCalledTimes(1);
   });
 });
