@@ -12,6 +12,14 @@ const origCreate = http.createServer.bind(http);
 const PEER_TOKEN = crypto.randomBytes(24).toString("hex");
 process.env.NINEROUTER_PEER_TOKEN = PEER_TOKEN;
 
+// Non-loopback reverse proxies whose X-Real-IP is trusted, e.g. the docker bridge
+// gateway nginx connects from when the app runs in a container. Exact addresses,
+// comma-separated. Without this every client behind such a proxy shares one IP, so
+// one password guesser locks the dashboard login for everyone.
+const TRUSTED_PROXY_IPS = new Set(
+  String(process.env.TRUSTED_PROXY_IPS || "").split(",").map((s) => s.trim()).filter(Boolean)
+);
+
 // Wrap Next standalone HTTP server: derive client IP from the TCP socket
 // (unspoofable) and strip client-supplied forwarding headers so downstream
 // rate-limiting keys on the real peer address instead of attacker-controlled XFF.
@@ -27,8 +35,15 @@ http.createServer = (...args) => {
     const isLoopbackProxy = socketIp === "127.0.0.1" || socketIp === "::1" || socketIp === "::ffff:127.0.0.1";
     // Trust forwarding headers only when the TCP peer is a local reverse proxy.
     // Direct/public sockets remain keyed by the unspoofable peer address.
-    const proxyIp = xRealIp || (xff ? String(xff).split(",")[0].trim() : "");
-    const ip = isLoopbackProxy && proxyIp ? proxyIp : socketIp;
+    let proxyIp = "";
+    if (isLoopbackProxy) {
+      proxyIp = xRealIp || (xff ? String(xff).split(",")[0].trim() : "");
+    } else if (TRUSTED_PROXY_IPS.has(socketIp.replace(/^::ffff:/, ""))) {
+      // X-Real-IP only: nginx overwrites it, but $proxy_add_x_forwarded_for keeps
+      // whatever X-Forwarded-For the client sent at the front.
+      proxyIp = xRealIp ? String(xRealIp).trim() : "";
+    }
+    const ip = proxyIp || socketIp;
     delete req.headers["x-9r-real-ip"];
     delete req.headers["x-forwarded-for"];
     delete req.headers["x-9r-via-proxy"];

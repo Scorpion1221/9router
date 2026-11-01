@@ -3,6 +3,9 @@
 ## Features
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
+## Fixes
+- **Auth**: add `TRUSTED_PROXY_IPS` so a reverse proxy on a non-loopback address (the docker bridge gateway) can pass the client IP via `X-Real-IP`. Without it every client behind such a proxy shared one login-lockout bucket, so a single password scanner kept the dashboard login locked for everyone. Only `X-Real-IP` is honoured from these peers, never `X-Forwarded-For`.
+
 # v0.5.112 (2026-10-28)
 
 ## Features

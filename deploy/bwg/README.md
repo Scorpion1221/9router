@@ -33,6 +33,7 @@ stopping it.
   - `/etc/nginx/conf.d/9router-upstream.conf` defines `upstream nine_router`, with the live slot as primary and the other slot as `backup`.
   - The vhosts in `SITES` do `proxy_pass http://nine_router;`.
   - Switching rewrites the upstream file and reloads nginx.
+  - nginx reaches the slots from the bridge gateway (`172.31.9.1`), not loopback, so `.env` sets `TRUSTED_PROXY_IPS=172.31.9.1`. Without it the app sees every client as that one IP, and a single password scanner locks the dashboard login for everyone.
 - Why container IPs and not published ports:
   - With Docker's default userland proxy, a published port keeps accepting after the app inside stops listening, then resets the connection. nginx can't retry a reset POST.
   - Connecting to the container IP gives a plain "connection refused" instead, which nginx retries on `backup` for every method.
