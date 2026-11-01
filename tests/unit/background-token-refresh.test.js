@@ -90,6 +90,18 @@ describe("selectConnectionsNeedingRefresh", () => {
     );
     expect(list).toHaveLength(1);
   });
+
+  it("skips a row whose current refresh token was stamped dead, until it is replaced", async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+    const { refreshTokenFingerprint } = await import("../../open-sse/services/oauthCredentialManager.js");
+    const soon = new Date(NOW + 10 * 60 * 1000).toISOString();
+    const dead = conn({ refreshToken: "rt-old", expiresAt: soon, refreshTokenDeadFor: refreshTokenFingerprint("rt-old") });
+    const relogged = conn({ id: "c2", refreshToken: "rt-new", expiresAt: soon, refreshTokenDeadFor: refreshTokenFingerprint("rt-old") });
+    const list = selectConnectionsNeedingRefresh([dead, relogged], NOW);
+    expect(list.map((c) => c.id)).toEqual(["c2"]);
+  });
 });
 
 describe("runBackgroundTokenRefreshTick", () => {

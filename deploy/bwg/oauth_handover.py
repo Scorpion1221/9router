@@ -12,11 +12,13 @@ An instance without refresh tokens keeps serving on its current access tokens
                             rows whose own lastRefreshAt is already newer.
   status DB                 count OAuth connections holding a refresh token.
   due DB                    minutes until the next refresh would fire (active rows);
-                            rows whose access token already expired are listed
+                            rows whose access token already expired, or whose
+                            refresh token the app stamped as rejected, are listed
                             under "stuck" instead of blocking.
 
 stdout only ever carries counts; tokens go to OUT.
 """
+import hashlib
 import json
 import os
 import re
@@ -69,6 +71,11 @@ def oauth_rows(db):
 def dump(d):
     return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
 
+
+
+def fingerprint(refresh_token):
+    # Mirrors open-sse/services/oauthCredentialManager.js refreshTokenFingerprint.
+    return hashlib.sha256(str(refresh_token).encode()).hexdigest()[:16]
 
 def ms(v):
     # Mirrors open-sse oauthCredentialManager parseTimeMs: ISO strings or epoch s/ms.
@@ -159,6 +166,13 @@ def due(db_path):
             continue
         which = "%s/%s" % (provider, name)
         exp = ms(d.get("expiresAt") or d.get("tokenExpiresAt"))
+        # The app stamps a refresh token the provider rejected for good (invalid_grant,
+        # e.g. Claude's ~28-day limit). Nothing will refresh it until a re-login, so two
+        # instances can't race it: report it, don't wait on it.
+        if d.get("refreshTokenDeadFor") and d["refreshTokenDeadFor"] == fingerprint(d["refreshToken"]):
+            stuck.append({"which": which, "expired_minutes_ago": round((now - exp) / 60000, 1) if exp else 0,
+                          "reason": "refresh token rejected (%s)" % d.get("refreshTokenDeadCode", "dead")})
+            continue
         if exp is not None and exp < now:
             stuck.append({"which": which, "expired_minutes_ago": round((now - exp) / 60000, 1)})
             continue

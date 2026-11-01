@@ -21,11 +21,13 @@ import {
   getAllAccessTokens as _getAllAccessTokens,
   refreshKiroToken as _refreshKiroToken,
   refreshNousToken as _refreshNousToken,
-  getRefreshLeadMs as _getRefreshLeadMs
+  getRefreshLeadMs as _getRefreshLeadMs,
+  isUnrecoverableRefreshError,
 } from "open-sse/services/tokenRefresh.js";
 import {
   refreshProviderCredentials as _refreshProviderCredentials,
   shouldRefreshCredentials as _shouldRefreshCredentials,
+  refreshTokenFingerprint,
 } from "open-sse/services/oauthCredentialManager.js";
 
 export const TOKEN_EXPIRY_BUFFER_MS = BUFFER_MS;
@@ -267,6 +269,17 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
     });
 
     const newCreds = await _refreshProviderCredentials(provider, creds, log);
+    if (isUnrecoverableRefreshError(newCreds) && creds.connectionId) {
+      // Stamp the dead refresh token, tied to the token it belongs to: the background
+      // refresher stops spending ticks on it, and rollout.sh's OAuth gate stops waiting
+      // for a refresh that cannot happen. A re-login writes a new refreshToken, which
+      // no longer matches the stamp.
+      await updateProviderConnection(creds.connectionId, {
+        refreshTokenDeadAt: new Date().toISOString(),
+        refreshTokenDeadFor: refreshTokenFingerprint(creds.refreshToken),
+        refreshTokenDeadCode: newCreds.code || newCreds.error,
+      }).catch(() => {});
+    }
     if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken) {
       const mergedCreds = {
         ...newCreds,

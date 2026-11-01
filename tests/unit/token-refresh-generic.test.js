@@ -79,7 +79,7 @@ describe("refreshAccessToken — config-driven profiles", () => {
   });
 
   it("returns null on non-ok response", async () => {
-    mockFetchOnce({ error: "invalid_grant" }, { ok: false, status: 400 });
+    mockFetchOnce({ error: "server_error" }, { ok: false, status: 500 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
     const out = await refreshAccessToken("iflow", "dead", {}, console);
     expect(out).toBeNull();
@@ -135,5 +135,33 @@ describe("Cline refresh", () => {
     expect(out.accessToken).toBe("cline-acc");
     expect(out.refreshToken).toBe("cline-rot");
     expect(out.expiresIn).toBeGreaterThan(0);
+  });
+});
+
+describe("refreshAccessToken — permanent failures", () => {
+  beforeEach(() => { vi.clearAllMocks(); vi.resetModules(); global.fetch = originalFetch; });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("claude invalid_grant comes back as an unrecoverable error, not null", async () => {
+    mockFetchOnce({ error: "invalid_grant", error_description: "Refresh token expired" }, { ok: false, status: 400 });
+    const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    const { isUnrecoverableRefreshError } = await import("open-sse/services/tokenRefresh.js");
+    const out = await refreshAccessToken("claude", "dead-rt", {}, console);
+    expect(isUnrecoverableRefreshError(out)).toBe(true);
+    expect(out.code).toBe("invalid_grant");
+  });
+
+  it("a transient failure (5xx) still returns null", async () => {
+    mockFetchOnce({ error: "server_error" }, { ok: false, status: 503 });
+    const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    expect(await refreshAccessToken("claude", "rt", {}, console)).toBeNull();
+  });
+});
+
+describe("refreshTokenFingerprint", () => {
+  it("matches deploy/bwg/oauth_handover.py fingerprint (sha256 hex, first 16)", async () => {
+    const { refreshTokenFingerprint } = await import("open-sse/services/oauthCredentialManager.js");
+    expect(refreshTokenFingerprint("abc")).toBe("ba7816bf8f01cfea");
+    expect(refreshTokenFingerprint("")).toBeNull();
   });
 });

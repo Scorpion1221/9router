@@ -115,6 +115,10 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
         status: response.status,
         error: errorText,
       });
+      // A dead refresh token (invalid_grant: expired, reused, revoked) won't recover on
+      // retry; say so, so the caller can record it instead of retrying every tick.
+      const failure = classifyOAuthRefreshError(errorText, response.status);
+      if (failure.permanent) return { error: "unrecoverable_refresh_error", code: failure.code };
       return null;
     }
 

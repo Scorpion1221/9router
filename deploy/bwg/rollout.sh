@@ -233,7 +233,7 @@ wait_refresh_quiet() {  # MINUTES — no single-use refresh token due while two 
     m=$(python3 -c 'import json,sys; v=json.load(sys.stdin)["min_due_minutes"]; print(9999 if v is None else int(v))' <<<"$due")
     if [ "$m" -ge "$need" ]; then
       python3 -c 'import json,sys
-for x in json.load(sys.stdin).get("stuck") or []: print("  stuck: %(which)s access token expired %(expired_minutes_ago)s min ago (re-login?)" % x)' <<<"$due" \
+for x in json.load(sys.stdin).get("stuck") or []: print("  stuck: %s %s (re-login?)" % (x["which"], x.get("reason") or "access token expired %s min ago" % x["expired_minutes_ago"]))' <<<"$due" \
         | while read -r l; do log "$l"; done || true
       return 0
     fi

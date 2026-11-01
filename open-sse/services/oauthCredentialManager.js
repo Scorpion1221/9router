@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   getRefreshLeadMs,
   isUnrecoverableRefreshError,
@@ -7,6 +8,19 @@ import { PROVIDER_OAUTH } from "../providers/index.js";
 
 // Single source: codex.oauth.maxRefreshAgeMs (8 days) — proactive refresh window
 export const CODEX_MAX_REFRESH_AGE_MS = PROVIDER_OAUTH["codex"]?.maxRefreshAgeMs;
+
+// Identifies a refresh token without storing it twice. deploy/bwg/oauth_handover.py
+// computes the same value (sha256 hex, first 16 chars) to match the dead-token stamp.
+export function refreshTokenFingerprint(refreshToken) {
+  return refreshToken ? createHash("sha256").update(String(refreshToken)).digest("hex").slice(0, 16) : null;
+}
+
+// A row whose current refresh token was rejected for good (refreshTokenDeadFor stamp).
+// Re-login writes a new refreshToken, so the stamp stops matching on its own.
+export function hasDeadRefreshToken(credentials) {
+  return !!credentials?.refreshTokenDeadFor
+    && credentials.refreshTokenDeadFor === refreshTokenFingerprint(credentials.refreshToken);
+}
 
 // Shared via globalThis across bundled copies of this module — see tokenRefresh/dedup.js.
 const refreshLocks = globalThis.__9rRefreshLocks ??= new Map();
@@ -45,6 +59,8 @@ export function isCodexRefreshStale(credentials, nowMs = Date.now(), maxAgeMs = 
 
 export function shouldRefreshCredentials(provider, credentials, nowMs = Date.now()) {
   if (!credentials) return false;
+  // Every attempt would fail the same way until the account is signed in again.
+  if (hasDeadRefreshToken(credentials)) return false;
 
   const expiresAtMs = getCredentialExpiryMs(credentials);
   if (expiresAtMs !== null && expiresAtMs - nowMs < getRefreshLeadMs(provider)) {
