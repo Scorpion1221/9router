@@ -5,13 +5,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  settings: { requireApiKey: false, comboStrategy: "fallback" },
   getProviderCredentials: vi.fn(),
   markAccountUnavailable: vi.fn(async () => ({ shouldFallback: true })),
   handleChatCore: vi.fn(),
 }));
 
 vi.mock("@/lib/localDb", () => ({
-  getSettings: async () => ({ requireApiKey: false, comboStrategy: "fallback" }),
+  getSettings: async () => mocks.settings,
   getModelAliases: async () => ({}),
   getComboByName: async () => null,
   getProviderNodes: async ({ type } = {}) => (type === "anthropic-compatible" ? [{ id: "anthropic-compatible-gw1", prefix: "e2egwnode" }] : []),
@@ -38,6 +39,7 @@ vi.mock("@/sse/services/tokenRefresh.js", () => ({
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: mocks.handleChatCore }));
 
 const { handleChat } = await import("../../src/sse/handlers/chat.js");
+const { resetProviderBreakers } = await import("../../open-sse/services/providerBreaker.js");
 
 const account = (n) => ({ connectionId: `c${n}`, connectionName: `acc${n}`, accessToken: "t", providerSpecificData: {} });
 const failure = (status) => ({ success: false, status, error: "boom", response: new Response("{}", { status }) });
@@ -53,6 +55,8 @@ function request(signal, model = "openai/gpt-x") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetProviderBreakers();
+  mocks.settings = { requireApiKey: false, comboStrategy: "fallback" };
   let n = 0;
   mocks.getProviderCredentials.mockImplementation(async () => account(++n));
 });
@@ -103,48 +107,79 @@ describe("handleSingleModelChat — client disconnect", () => {
   });
 });
 
-describe("handleSingleModelChat — upstream header timeout", () => {
+describe("handleSingleModelChat — per-provider failure policy", () => {
+  const GW = "anthropic-compatible-gw1";
   const timedOut = () => ({
     success: false, status: 502,
     error: "[502]: fetch connect timeout: no response headers within 150000ms (stream=true) (cause: fetch connect timeout)",
     response: new Response("{}", { status: 502 }),
   });
+  const ok = () => ({ success: true, response: new Response("ok", { status: 200 }) });
+  const gwRequest = () => request(new AbortController().signal, "e2egwnode/claude-opus-5-5");
 
-  it("gateway node: moves on without locking the slow account", async () => {
-    mocks.handleChatCore
-      .mockResolvedValueOnce(timedOut())
-      .mockResolvedValueOnce({ success: true, response: new Response("ok", { status: 200 }) });
+  it("noLockOnTimeout: moves on without locking the slow account", async () => {
+    mocks.settings.providerStrategies = { [GW]: { noLockOnTimeout: true } };
+    mocks.handleChatCore.mockResolvedValueOnce(timedOut()).mockResolvedValueOnce(ok());
 
-    const out = await handleChat(request(new AbortController().signal, "e2egwnode/claude-opus-5-5"));
+    const out = await handleChat(gwRequest());
 
     expect(out.status).toBe(200);
-    expect(mocks.getProviderCredentials.mock.calls[0][0]).toBe("anthropic-compatible-gw1");
+    expect(mocks.getProviderCredentials.mock.calls[0][0]).toBe(GW);
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
-    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
     expect([...mocks.getProviderCredentials.mock.calls[1][1]]).toEqual(["c1"]);
   });
 
-  it("gateway node: reports the timeout when no account is left", async () => {
-    mocks.getProviderCredentials.mockReset()
-      .mockResolvedValueOnce(account(1))
-      .mockResolvedValueOnce(null);
+  it("noLockOnTimeout: reports the timeout when no account is left", async () => {
+    mocks.settings.providerStrategies = { [GW]: { noLockOnTimeout: true } };
+    mocks.getProviderCredentials.mockReset().mockResolvedValueOnce(account(1)).mockResolvedValueOnce(null);
     mocks.handleChatCore.mockResolvedValueOnce(timedOut());
 
-    const out = await handleChat(request(new AbortController().signal, "e2egwnode/claude-opus-5-5"));
+    const out = await handleChat(gwRequest());
 
     expect(out.status).toBe(502);
     expect(await out.text()).toContain("no response headers");
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
   });
 
-  it("other providers still lock the account on a header timeout", async () => {
-    mocks.handleChatCore
-      .mockResolvedValueOnce(timedOut())
-      .mockResolvedValueOnce({ success: true, response: new Response("ok", { status: 200 }) });
+  it("switch off (default): a header timeout still locks the account", async () => {
+    mocks.handleChatCore.mockResolvedValueOnce(timedOut()).mockResolvedValueOnce(ok());
 
-    const out = await handleChat(request(new AbortController().signal));
+    const out = await handleChat(gwRequest());
 
     expect(out.status).toBe(200);
     expect(mocks.markAccountUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("breaker: opens after the threshold and short-circuits without calling upstream", async () => {
+    mocks.settings.providerStrategies = { [GW]: { noLockOnTimeout: true, breaker: { enabled: true, threshold: 2, windowSec: 60, cooldownSec: 30 } } };
+    mocks.getProviderCredentials.mockImplementation(async (_p, excluded) => (excluded?.has("c1") ? null : account(1)));
+    mocks.handleChatCore.mockResolvedValue(timedOut());
+
+    await handleChat(gwRequest());
+    await handleChat(gwRequest());
+    const callsBefore = mocks.handleChatCore.mock.calls.length;
+    const out = await handleChat(gwRequest());
+
+    expect(out.status).toBe(503);
+    expect(await out.text()).toContain("circuit breaker open");
+    expect(mocks.handleChatCore.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("breaker: a success resets the failure count", async () => {
+    mocks.settings.providerStrategies = { [GW]: { noLockOnTimeout: true, breaker: { enabled: true, threshold: 2, windowSec: 60, cooldownSec: 30 } } };
+    mocks.getProviderCredentials.mockImplementation(async (_p, excluded) => (excluded?.has("c1") ? null : account(1)));
+    mocks.handleChatCore.mockImplementation(async ({ onRequestSuccess }) => {
+      await onRequestSuccess?.();
+      return ok();
+    });
+    mocks.handleChatCore.mockResolvedValueOnce(timedOut());
+
+    await handleChat(gwRequest());
+    await handleChat(gwRequest());
+    mocks.handleChatCore.mockResolvedValueOnce(timedOut());
+    await handleChat(gwRequest());
+    const out = await handleChat(gwRequest());
+
+    expect(out.status).toBe(200);
   });
 });

@@ -32,6 +32,7 @@ import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
 import CustomConfigCard from "./CustomConfigCard";
+import FailureHandlingCard from "./FailureHandlingCard";
 import AutoPingScheduleModal from "./AutoPingScheduleModal";
 import WebLoginButton, { WEB_LOGIN_PROVIDERS } from "../components/WebLoginButton.js";
 import MinimaxLeaseButton from "../components/MinimaxLeaseButton.js";
@@ -1885,6 +1886,9 @@ export default function ProviderDetailPage() {
 
       {/* Per-provider user overrides (custom headers / connect timeout) */}
       <CustomConfigCard providerId={providerId} />
+
+      {/* Per-provider failure policy: no lock on header timeout, circuit breaker */}
+      <FailureHandlingCard providerId={providerId} />
 
       {/* Models */}
       <Card>

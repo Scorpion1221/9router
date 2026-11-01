@@ -29,6 +29,7 @@ import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { recordRequestMetric, errorTypeForStatus, outcomeForStatus } from "@/lib/db/repos/requestMetricsRepo.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
+import { resolveFailurePolicy, breakerGate, recordProviderFailure, recordProviderSuccess } from "open-sse/services/providerBreaker.js";
 
 // Per-request ops context: which model/combo the client asked for, and how
 // the last upstream stream attempt ended (set by the account loop), so the
@@ -373,6 +374,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
   let lastHeaders = null;
 
+  const failurePolicy = resolveFailurePolicy(await getSettings(), provider);
+  const gate = breakerGate(provider, failurePolicy);
+  if (gate.open) {
+    log.warn("BREAKER", `${provider} open, skipping (${Math.ceil(gate.retryAfterMs / 1000)}s left)`);
+    return unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `[${provider}/${model}] circuit breaker open`,
+      new Date(Date.now() + gate.retryAfterMs).toISOString(), `${Math.ceil(gate.retryAfterMs / 1000)}s`);
+  }
+  if (gate.probe) log.info("BREAKER", `${provider} half-open, sending a probe`);
+
   while (true) {
     if (clientSignal?.aborted) return clientGone();
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
@@ -473,6 +483,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         });
       },
       onRequestSuccess: async () => {
+        recordProviderSuccess(provider);
         await clearAccountError(credentials.connectionId, credentials, model);
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
@@ -502,12 +513,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (result.success) return result.response;
 
-    // A gateway header timeout says this request was slow (a cold multi-hundred-k prompt
-    // can take longer to prefill than the timeout), not that the node is unhealthy.
-    // Skip it for this request only: a gateway node has one account, so a lock would
-    // fail every other request routed to it for the whole cooldown.
-    if (provider?.startsWith?.("anthropic-compatible-") && result.status === HTTP_STATUS.BAD_GATEWAY
-      && String(result.error).includes(HEADER_TIMEOUT_MARKER)) {
+    const headerTimeout = result.status === HTTP_STATUS.BAD_GATEWAY && String(result.error).includes(HEADER_TIMEOUT_MARKER);
+    if (headerTimeout || result.status >= 500) {
+      if (recordProviderFailure(provider, failurePolicy)) {
+        log.warn("BREAKER", `${provider} open for ${failurePolicy.breaker.cooldownMs / 1000}s after ${failurePolicy.breaker.threshold} failures`);
+      }
+    }
+
+    // Opt-in per provider (noLockOnTimeout): a header timeout says this request was slow,
+    // not that the account is unhealthy. Skip the account for this request only.
+    if (headerTimeout && failurePolicy.noLockOnTimeout) {
       log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} header timeout → NEXT ACCOUNT (not locked)`);
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
