@@ -67,7 +67,10 @@ export async function handleEmbeddingsCore({
       const status = err?.status || HTTP_STATUS.BAD_GATEWAY;
       const msg = formatProviderError(err, provider, model, status);
       log?.debug?.("EMBEDDINGS", `fetchAll error: ${msg}`);
-      return createErrorResult(status, msg);
+      const result = createErrorResult(status, msg);
+      // The failure happened on our side before upstream judged the credential.
+      if (err?.noAccountLock) result.noAccountLock = true;
+      return result;
     }
   }
 

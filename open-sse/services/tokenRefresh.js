@@ -80,6 +80,17 @@ export function parseVertexSaJson(apiKey) {
 // Cache Vertex tokens keyed by service account email { token, expiresAt }
 const vertexTokenCache = new Map();
 
+// A mint that never got an HTTP response (connect timeout, reset) is retried once
+// after a short pause. A fresh slot has an empty cache, so its first request has to
+// mint, and one connect hiccup there used to fail the whole request.
+const VERTEX_MINT_ATTEMPTS = 2;
+const VERTEX_MINT_RETRY_DELAY_MS = 300;
+
+function describeFetchError(error) {
+  const cause = error?.cause?.code || error?.cause?.message;
+  return cause ? `${error.message} (cause: ${cause})` : error?.message;
+}
+
 export async function refreshVertexToken(saJson, log) {
   const cacheKey = saJson.client_email;
   const cached = vertexTokenCache.get(cacheKey);
@@ -102,15 +113,26 @@ export async function refreshVertexToken(saJson, log) {
       .setExpirationTime(now + 3600)
       .sign(privateKey);
 
-    const res = await fetch(OAUTH_ENDPOINTS.google.token, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: jwt,
-      }),
-    });
+    let res;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        res = await fetch(OAUTH_ENDPOINTS.google.token, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            assertion: jwt,
+          }),
+        });
+        break;
+      } catch (error) {
+        if (attempt >= VERTEX_MINT_ATTEMPTS) throw error;
+        log?.warn?.("TOKEN_REFRESH", `Vertex token fetch failed: ${describeFetchError(error)}; retrying`);
+        await new Promise((r) => setTimeout(r, VERTEX_MINT_RETRY_DELAY_MS));
+      }
+    }
 
+    // Google answered: a rejection here is about the key itself, so no retry.
     if (!res.ok) {
       const err = await res.text();
       log?.error?.("TOKEN_REFRESH", `Vertex token mint failed: ${err}`);
@@ -125,7 +147,7 @@ export async function refreshVertexToken(saJson, log) {
 
     return { accessToken: access_token, expiresAt };
   } catch (error) {
-    log?.error?.("TOKEN_REFRESH", `Vertex token error: ${error.message}`);
+    log?.error?.("TOKEN_REFRESH", `Vertex token error: ${describeFetchError(error)}`);
     return null;
   }
 }

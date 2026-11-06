@@ -33,11 +33,18 @@ async function ensureVertexAccessToken(creds, log) {
     return; // still fresh
   }
   const minted = await refreshVertexToken(saJson, log);
-  if (minted?.accessToken) {
-    creds.accessToken = minted.accessToken;
-    if (minted.expiresAt) {
-      creds.expiresAt = new Date(minted.expiresAt).toISOString();
-    }
+  if (!minted?.accessToken) {
+    // Sending the accessToken stored on the connection instead only earns a 401
+    // (it is whatever an earlier mint left behind, usually long expired), and a
+    // 401 locks the account as if its key were bad. Fail this request alone.
+    const err = new Error("Vertex: could not mint an access token from the service account");
+    err.status = 503;
+    err.noAccountLock = true;
+    throw err;
+  }
+  creds.accessToken = minted.accessToken;
+  if (minted.expiresAt) {
+    creds.expiresAt = new Date(minted.expiresAt).toISOString();
   }
 }
 

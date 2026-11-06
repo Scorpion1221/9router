@@ -34,6 +34,9 @@ stopping it.
   - The vhosts in `SITES` do `proxy_pass http://nine_router;`.
   - Switching rewrites the upstream file and reloads nginx.
   - nginx reaches the slots from the bridge gateway (`172.31.9.1`), not loopback, so `.env` sets `TRUSTED_PROXY_IPS=172.31.9.1`. Without it the app sees every client as that one IP, and a single password scanner locks the dashboard login for everyone.
+- The slots have no IPv6 route, so the override's `NODE_OPTIONS` adds `--no-network-family-autoselection --dns-result-order=ipv4first`.
+  - Without them, Node 22 gives each connect attempt 250 ms before it moves on to the next address. Upstreams like Google and Anthropic also publish AAAA records, and IPv6 fails at once with ENETUNREACH. A stall of 250 ms or more then fails the request as `fetch failed`. The usual cause is a busy or just-started slot.
+  - On 2026-11-06 that broke a Vertex token mint on a fresh slot and locked embeddings for 2 min.
 - Why container IPs and not published ports:
   - With Docker's default userland proxy, a published port keeps accepting after the app inside stops listening, then resets the connection. nginx can't retry a reset POST.
   - Connecting to the container IP gives a plain "connection refused" instead, which nginx retries on `backup` for every method.

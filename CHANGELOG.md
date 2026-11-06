@@ -5,6 +5,7 @@
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
 ## Fixes
+- **Vertex**: a service-account token mint that gets no HTTP response (connect timeout, reset) is retried once, and the log now names the cause. If the mint still fails, embeddings return 503 for that request. Before, they sent the stale token stored on the connection, got a 401, and locked the only account for 2 minutes. Mints are per slot, so this hit the first embedding after every deploy.
 - **Dashboard**: dragging a Claude/Codex connection to a new priority now reorders the list at once (it kept the old priority numbers until a reload); the "saved" toast waits for the save.
 - **Dashboard**: the Codex connection list drops the 5h quota column; Codex routes on the weekly window.
 - **Dashboard**: the Claude/Codex connection list uses the site's top-right toast instead of its own bottom text, with errors in red.

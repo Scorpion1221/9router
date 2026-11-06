@@ -155,6 +155,17 @@ export async function handleEmbeddings(request) {
       return result.response;
     }
 
+    // A gateway-side failure (e.g. Vertex token mint never reached Google) says nothing
+    // about the account: skip it for this request only, without a lock that would fail
+    // every later request in the cooldown window.
+    if (result.noAccountLock) {
+      log.warn("AUTH", `Account ${credentials.connectionName} skipped for this request (${result.status}, not locked)`);
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = result.error;
+      lastStatus = result.status;
+      continue;
+    }
+
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
 
     if (shouldFallback) {
