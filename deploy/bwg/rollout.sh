@@ -209,7 +209,10 @@ healthy() {  # BASE_URL — boot + a real authenticated /v1 call
   k=$(sqlite3 -readonly "$DB" "select key from apiKeys where isActive=1 and coalesce(accessRestricted,0)=0 order by createdAt limit 1")
   [ -n "$k" ] || { log "  no active unrestricted API key to test /v1/models with"; return 1; }
   # Key via stdin, not argv: other local users can read process arguments.
-  [ "$(curl -sS -m 30 -o /dev/null -w '%{http_code}' -H @- "$1/v1/models" <<<"Authorization: Bearer $k")" = 200 ] \
+  # The first /v1/models on a cold slot takes 20-35 s (route load plus live catalog
+  # fetches), so 30 s failed healthy slots (2026-11-06). The gate checks that it
+  # works, not how fast; this call also warms the slot before it takes traffic.
+  [ "$(curl -sS -m 90 -o /dev/null -w '%{http_code}' -H @- "$1/v1/models" <<<"Authorization: Bearer $k")" = 200 ] \
     || { log "  $1/v1/models did not return 200"; return 1; }
 }
 
