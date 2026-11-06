@@ -926,9 +926,13 @@ export default function ProviderDetailPage() {
 
   // Show the new order at once, persist it in one request, and reload the
   // saved order if that fails so the list never disagrees with the server.
+  // Renumber like the server does, so lists that sort by priority show the new order now.
   const handleReorder = async (next) => {
-    setConnections(next);
-    if (!(await saveConnectionOrder(providerId, next))) await fetchConnections();
+    const ordered = next.map((c, i) => ({ ...c, priority: i + 1 }));
+    setConnections(ordered);
+    const ok = await saveConnectionOrder(providerId, ordered);
+    if (!ok) await fetchConnections();
+    return ok;
   };
 
   const handleSwapPriority = (index1, index2) => {

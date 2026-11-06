@@ -5,6 +5,10 @@
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
 ## Fixes
+- **Dashboard**: dragging a Claude/Codex connection to a new priority now reorders the list at once (it kept the old priority numbers until a reload); the "saved" toast waits for the save.
+- **Dashboard**: the Codex connection list drops the 5h quota column; Codex routes on the weekly window.
+- **Dashboard**: the Claude/Codex connection list uses the site's top-right toast instead of its own bottom text, with errors in red.
+- **Console Log**: stop forcing the view to the bottom. It follows new lines only while scrolled to the bottom; scrolling up freezes the view and shows "Paused · N new · jump to latest".
 - **Auth**: add `TRUSTED_PROXY_IPS` so a reverse proxy on a non-loopback address (the docker bridge gateway) can pass the client IP via `X-Real-IP`. Without it every client behind such a proxy shared one login-lockout bucket, so a single password scanner kept the dashboard login locked for everyone. Only `X-Real-IP` is honoured from these peers, never `X-Forwarded-For`.
 
 # v0.5.112 (2026-10-28)

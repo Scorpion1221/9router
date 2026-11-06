@@ -261,8 +261,6 @@
 /* floating tooltip + toast */
 .qcl .tip{position:fixed;left:0;top:0;z-index:90;max-width:300px;padding:6px 9px;border-radius:7px;background:var(--tip-bg);color:#f4f4f5;font-size:11.5px;line-height:1.45;pointer-events:none;opacity:0;transition:opacity .1s;box-shadow:0 6px 18px rgba(0,0,0,.3)}
 .qcl .tip.show{opacity:1}
-.qcl .toast{position:fixed;left:50%;bottom:24px;z-index:95;max-width:min(560px,90vw);padding:9px 14px;border-radius:10px;background:var(--pop);color:var(--text);box-shadow:var(--pop-shadow);font-size:12.5px;opacity:0;transform:translate(-50%,10px);transition:opacity .18s,transform .18s;pointer-events:none}
-.qcl .toast.show{opacity:1;transform:translate(-50%,0)}
 
 @keyframes qcl-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 50%,transparent)}60%{box-shadow:0 0 0 5px color-mix(in srgb,var(--ok) 0%,transparent)}}
 @keyframes qcl-spin{to{transform:rotate(360deg)}}
@@ -396,4 +394,13 @@ html:not(.dark) .qcl .bsum-next .when{color:var(--warn-ink)}
 @container qcl (max-width: 640px){
   .qcl .rl-i{grid-template-columns:10px minmax(0,1fr) auto}
   .qcl .rl-i .w{grid-column:2 / -1;grid-row:2}
+}
+
+/* Providers without a 5h column (Codex): the week bar takes its place. */
+@container qcl (min-width: 981px){
+  .qcl .list.no5h{--cols:18px 34px minmax(160px,1fr) 236px 200px 172px}
+  .qcl .list.no5h.priority{--cols:16px 18px 34px minmax(160px,1fr) 236px 200px 172px}
+}
+@container qcl (max-width: 980px){
+  .qcl .list.no5h .lhead .c-qw{display:block}
 }

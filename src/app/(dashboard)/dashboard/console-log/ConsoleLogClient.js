@@ -23,6 +23,12 @@ export default function ConsoleLogClient() {
   const [logs, setLogs] = useState([]);
   const [connected, setConnected] = useState(false);
   const logRef = useRef(null);
+  // Follow new lines only while the view is at the bottom. Scrolling up freezes the
+  // view (the 200-line window would otherwise trim what you are reading); scrolling
+  // back to the bottom, or the button, resumes it.
+  const followRef = useRef(true);
+  const [frozen, setFrozen] = useState(null);
+  const [pending, setPending] = useState(0);
 
   const handleClear = async () => {
     try {
@@ -43,16 +49,20 @@ export default function ConsoleLogClient() {
       if (msg.type === "init") {
         setLogs(msg.logs.slice(-CONSOLE_LOG_CONFIG.maxLines));
       } else if (msg.type === "line") {
+        if (!followRef.current) setPending((n) => n + 1);
         setLogs((prev) => {
           const next = [...prev, msg.line];
           return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
         });
       } else if (msg.type === "lines") {
+        if (!followRef.current) setPending((n) => n + msg.lines.length);
         setLogs((prev) => {
           const next = [...prev, ...msg.lines];
           return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
         });
       } else if (msg.type === "clear") {
+        followRef.current = true;
+        setFrozen(null);
         setLogs([]);
       }
     };
@@ -62,11 +72,23 @@ export default function ConsoleLogClient() {
     return () => es.close();
   }, []);
 
-  // Auto-scroll to bottom on new logs
+  const resume = () => { followRef.current = true; setFrozen(null); };
+  const onScroll = () => {
+    const el = logRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (atBottom === followRef.current) return;
+    if (atBottom) { resume(); return; }
+    followRef.current = false;
+    setFrozen(logs);
+    setPending(0);
+  };
+  const shown = frozen || logs;
+
   useEffect(() => {
-    if (!logRef.current) return;
+    if (!logRef.current || !followRef.current) return;
     logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [logs]);
+  }, [shown]);
 
   return (
     <div className="">
@@ -76,19 +98,32 @@ export default function ConsoleLogClient() {
             Clear
           </Button>
         </div>
+        <div className="relative">
         <div
           ref={logRef}
+          onScroll={onScroll}
           className="bg-black rounded-b-lg p-4 text-xs font-mono h-[calc(100vh-220px)] overflow-y-auto"
         >
-          {logs.length === 0 ? (
+          {shown.length === 0 ? (
             <span className="text-text-muted">No console logs yet.</span>
           ) : (
             <div className="space-y-0.5">
-              {logs.map((line, i) => (
+              {shown.map((line, i) => (
                 <div key={i}>{colorLine(line)}</div>
               ))}
             </div>
           )}
+        </div>
+        {frozen && (
+          <button
+            type="button"
+            onClick={resume}
+            className="absolute bottom-4 right-6 flex items-center gap-1 rounded-full border border-white/15 bg-neutral-800/90 px-3 py-1.5 text-xs text-white shadow-lg hover:bg-neutral-700"
+          >
+            <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+            Paused{pending > 0 ? ` · ${pending} new` : ""} · jump to latest
+          </button>
+        )}
         </div>
       </Card>
     </div>

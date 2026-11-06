@@ -8,12 +8,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import "./quotaConnections.css";
 import LimitResetDialog from "./LimitResetDialog";
+import { useNotificationStore } from "@/store/notificationStore";
 import {
   formatFull, formatWhen, formatDuration, parseUpstreamError, statusOf, rankWhenBack, weekBucket, rankNum,
   modelName, winLabel, windowWord, windowsOf, loginExpiry,
 } from "./quotaRouting";
 
 const POLL_MS = 30 * 1000;
+// Codex accounts are routed on the weekly window; its 5h window is not worth a column.
+const NO_5H_PROVIDERS = new Set(["codex"]);
 const DAY = 864e5;
 const ts = (iso) => (iso ? Date.parse(iso) : null);
 
@@ -104,7 +107,7 @@ export default function QuotaConnectionList({
   const [pinnedErr, setPinnedErr] = useState(null);
   const [testingId, setTestingId] = useState(null);
   const [refreshingId, setRefreshingId] = useState(null);
-  const [toast, setToast] = useState(null);
+  const notify = useNotificationStore();
   const [resetFor, setResetFor] = useState(null);
   const [resetNonce, setResetNonce] = useState(0);
   const resetCounts = useResetCounts(providerId, resetNonce);
@@ -131,6 +134,7 @@ export default function QuotaConnectionList({
   const relogin = accounts.filter((a) => a.active && needsLogin(a.id)).sort((x, y) => logins.get(x.id).rank - logins.get(y.id).rank);
   const comingUp = accounts.filter((a) => a.active && logins.get(a.id)?.tier === "soon").sort((x, y) => logins.get(x.id).rank - logins.get(y.id).rank);
   const [flashIds, setFlashIds] = useState(null);
+  const show5h = !NO_5H_PROVIDERS.has(providerId);
   const strategy = view?.strategy || "fill-first";
   const isResetFirst = strategy === "reset-first";
   const effectiveMode = isResetFirst ? mode : "priority";
@@ -202,11 +206,6 @@ export default function QuotaConnectionList({
     return () => { root.removeEventListener("mouseover", over); root.removeEventListener("mouseleave", hide); window.removeEventListener("scroll", hide); };
   }, []);
 
-  useEffect(() => {
-    if (!toast) return undefined;
-    const t = setTimeout(() => setToast(null), 2600);
-    return () => clearTimeout(t);
-  }, [toast]);
 
   const toggleOpen = (id) => setOpen((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const runTest = async (a) => {
@@ -214,7 +213,7 @@ export default function QuotaConnectionList({
     setTestingId(a.id);
     try {
       const ok = await onTest(a.id);
-      setToast(ok === false ? `${a.name}: test failed` : `${a.name}: test finished`);
+      if (ok === false) notify.error(`${a.name}: test failed`); else notify.success(`${a.name}: test finished`);
     } finally { setTestingId(null); }
   };
   // Same read as the Quota Tracker's refresh; a fresh usage reading also feeds the gateway's live quota.
@@ -226,16 +225,17 @@ export default function QuotaConnectionList({
       const data = await res.json().catch(() => ({}));
       // A soft failure comes back 200 with only a message (e.g. the usage API is rate limited).
       const failed = !res.ok || (data.message && !data.quotas);
-      setToast(failed ? `${a.name}: ${data.error || data.message || `quota refresh failed (HTTP ${res.status})`}` : `${a.name}: quota refreshed`);
+      if (failed) notify.error(`${a.name}: ${data.error || data.message || `quota refresh failed (HTTP ${res.status})`}`);
+      else notify.success(`${a.name}: quota refreshed`);
       reload();
       setResetNonce((n) => n + 1);
     } catch {
-      setToast(`${a.name}: quota refresh failed`);
+      notify.error(`${a.name}: quota refresh failed`);
     } finally { setRefreshingId(null); }
   };
   const copy = (text) => {
     if (!text) return;
-    navigator.clipboard?.writeText(text).then(() => setToast("Copied the raw upstream error"), () => setToast("Copy is blocked here"));
+    navigator.clipboard?.writeText(text).then(() => notify.success("Copied the raw upstream error"), () => notify.error("Copy is blocked here"));
   };
 
   /* ---------- row pieces (same markup as the preview) ---------- */
@@ -497,11 +497,11 @@ export default function QuotaConnectionList({
       <div className="details" onClick={(ev) => ev.stopPropagation()}>
         <section>
           <div className="dh">Quota windows</div>
-          {windowsOf(a).length ? (
+          {windowsOf(a).filter((w) => show5h || w.key !== "5h").length ? (
             <table className="wt">
               <thead><tr><th>Window</th><th>Left</th><th>Resets</th><th>Read</th></tr></thead>
               <tbody>
-                {windowsOf(a).map((w) => {
+                {windowsOf(a).filter((w) => show5h || w.key !== "5h").map((w) => {
                   const r = ts(w.resetAt);
                   return (
                     <tr key={w.key} className={st.win === w.key ? `hit t-${st.tone}` : ""}>
@@ -564,8 +564,11 @@ export default function QuotaConnectionList({
       let i = rest.findIndex((c) => c.id === hint.id);
       if (hint.after) i += 1;
       rest.splice(i, 0, moving);
-      onReorder(rest);
-      setToast("Priority saved. Gateway order recalculated.");
+      Promise.resolve(onReorder(rest)).then((ok) => {
+        if (ok === false) { notify.error("Priority not saved; reloaded the saved order"); return; }
+        reload();
+        notify.success("Priority saved. Gateway order recalculated.");
+      });
     },
     onDragEnd: () => { dragRef.current = null; setDropHint(null); },
   });
@@ -591,7 +594,7 @@ export default function QuotaConnectionList({
           <div className="c-name">{nameCell(a)}</div>
           <div className="c-status">{statusCell(a, st)}</div>
           <div className="c-quota">
-            <div className="c-q5">{bar(a, a.windows["5h"], "5h", st)}</div>
+            {show5h && <div className="c-q5">{bar(a, a.windows["5h"], "5h", st)}</div>}
             <div className="c-qw">{bar(a, a.windows["7d"], "7d", st)}{modelChips(a, st)}</div>
           </div>
           <div className="c-act">{actCell(a)}</div>
@@ -629,7 +632,7 @@ export default function QuotaConnectionList({
               const value = e.target.value || null;
               await onStrategyChange(value);
               reload();
-              setToast(`Strategy: ${STRATEGIES.find((x) => x.value === (value || ""))?.label}. Order recalculated.`);
+              notify.success(`Strategy: ${STRATEGIES.find((x) => x.value === (value || ""))?.label}. Order recalculated.`);
             }}>
               {STRATEGIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
@@ -697,7 +700,7 @@ export default function QuotaConnectionList({
         </div>
       )}
 
-      <div className={`list${effectiveMode === "priority" ? " priority" : ""}`} role="table" aria-label="Connections">
+      <div className={`list${effectiveMode === "priority" ? " priority" : ""}${show5h ? "" : " no5h"}`} role="table" aria-label="Connections">
         <div className="lhead grid" role="row">
           <div className="c-drag" />
           <div className="c-check"><input type="checkbox" checked={allSelected} ref={(el) => { if (el) el.indeterminate = selectedCount > 0 && !allSelected; }} onChange={onSelectAll} aria-label="Select all" /></div>
@@ -705,8 +708,8 @@ export default function QuotaConnectionList({
           <div className="c-name">Account</div>
           <div className="c-status">Status</div>
           <div className="c-quota">
-            <div className="c-q5"><Tip className="w" text="5-hour session quota left">5h</Tip><span className="n">Quota left</span></div>
-            <div className="c-qw"><Tip className="w" text="Weekly (7-day) quota left. A tick marks the account's keep %">Week</Tip></div>
+            {show5h && <div className="c-q5"><Tip className="w" text="5-hour session quota left">5h</Tip><span className="n">Quota left</span></div>}
+            <div className="c-qw"><Tip className="w" text="Weekly (7-day) quota left. A tick marks the account's keep %">Week</Tip>{!show5h && <span className="n">Quota left</span>}</div>
           </div>
           <div className="c-act" />
         </div>
@@ -738,12 +741,11 @@ export default function QuotaConnectionList({
           onDone={(res) => {
             setResetNonce((n) => n + 1);
             reload();
-            if (res?.outcome === "reset") setToast(`${resetFor.name || "Account"}: limit reset used`);
+            if (res?.outcome === "reset") notify.success(`${resetFor.name || "Account"}: limit reset used`);
           }}
         />
       )}
       <div className="tip" ref={tipRef} role="tooltip" />
-      <div className={`toast${toast ? " show" : ""}`} role="status" aria-live="polite">{toast}</div>
     </section>
   );
 }
