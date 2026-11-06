@@ -1,0 +1,19 @@
+[Unit]
+Description=Feishu alert when 9router clients start getting errors
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Feishu bot + chat, shared with the OAuth expiry reminder; mode 600, not committed
+EnvironmentFile=/etc/9router-oauth-watch.env
+# HC_PING_URL (healthchecks.io); optional, mode 600, not committed
+EnvironmentFile=-/etc/9router-gateway-alert.env
+ExecStart=/usr/bin/python3 /root/9router/deploy/bwg/gateway_alert.py
+StateDirectory=9router-alert
+TimeoutStartSec=50
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+# Not "strict": a read-only SQLite reader on a WAL database still writes the -shm file.
+ProtectSystem=full

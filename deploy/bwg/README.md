@@ -22,6 +22,7 @@ stopping it.
 | `oauth_handover.py` | `due`: minutes until the next single-use OAuth refresh. Gates every overlap of two instances. Also used by the original host move. |
 | `rollout.env.example` | Host settings. Copy to `rollout.env` (git-ignored). `SITES` is required. |
 | `oauth_expiry_watch.py` + `oauth-expiry-watch.{service,timer}` | Daily Feishu reminder, 3 days before a Claude OAuth login reaches ~28 days (see below). |
+| `gateway_alert.py` + `gateway-alert.{service,timer}` | Every-minute Feishu alert when clients start getting errors or the gateway stops answering (see below). |
 
 ## Layout on the host
 
@@ -170,6 +171,44 @@ install -m 600 /dev/null /etc/9router-oauth-watch.env   # then add FEISHU_APP_ID
 cp deploy/bwg/oauth-expiry-watch.{service,timer} /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now oauth-expiry-watch.timer
 python3 deploy/bwg/oauth_expiry_watch.py --dry-run      # preview without posting
+```
+
+## Gateway error alert
+
+Long-running agents stop when the gateway fails them: a Claude client does not retry a
+400, and a combo with every member down answers 503. `gateway_alert.py` runs every minute
+and reads what the gateway recorded about each answer it gave (`requestMetrics`,
+kind `request`). It sends a red card to the same Feishu chat as the expiry reminder when,
+in the last 5 minutes:
+- clients got at least 4 failed answers across at least 2 API keys, or
+- one key got at least 6 and no success.
+
+What counts as a failed answer:
+- Counted: 5xx, 429, and any other 4xx from upstream. On 2026-11-06 a combo's last
+  member, on a removed gateway channel, answered 400 and stopped several agents.
+- Not counted: 401, 403 and 404 (wrong key or model name) and 499 (the client hung up).
+
+The card names the keys, combos and status codes, and which upstream member failed. It
+repeats every 30 minutes while the failures last and sends one green card after 10 quiet
+minutes. A separate card fires when no slot in the nginx upstream answers `/api/health`
+two runs in a row, because then nothing reaches `requestMetrics`.
+
+Replayed over the 7 days to 2026-11-07: 11 incidents, 25 cards. The 11-06 400 would have
+alerted at 17:27 UTC, a minute after it began. State is kept in
+`/var/lib/9router-alert/state.json`.
+
+The Feishu settings come from `/etc/9router-oauth-watch.env`.
+`/etc/9router-gateway-alert.env` (mode 600, not committed) holds `HC_PING_URL`, a
+healthchecks.io check that every run pings. A run that fails, or a card that does not
+send, pings `/fail`. So a dead host, timer or bot shows up there.
+
+```bash
+install -m 600 /dev/null /etc/9router-gateway-alert.env      # then add HC_PING_URL (optional)
+cp deploy/bwg/gateway-alert.{service,timer} /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now gateway-alert.timer
+python3 deploy/bwg/gateway_alert.py --replay 7               # cards past traffic would have sent
+python3 deploy/bwg/gateway_alert.py --at "2026-11-06 17:27"  # post one past minute's card as 【测试】
+journalctl -u gateway-alert -n 20                            # last runs
 ```
 
 ## Known limits
