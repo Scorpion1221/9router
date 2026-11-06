@@ -63,22 +63,24 @@ export default function DashboardLayout({ children }) {
           return (
             <div
               key={n.id}
-              className={`rounded-lg border px-3 py-2 shadow-lg backdrop-blur-sm ${style.wrapper}`}
+              className={`rounded-lg border px-3 py-2.5 shadow-lg backdrop-blur-sm ${style.wrapper}`}
             >
+              {/* Icon, first text line and close button share one 20px line. Sizes are inline:
+                  the unlayered .material-symbols-outlined rule (24px) beats Tailwind utilities. */}
               <div className="flex items-start gap-2">
-                <span className="material-symbols-outlined text-[18px] leading-5">{style.icon}</span>
+                <span className="material-symbols-outlined shrink-0" style={{ fontSize: 18, lineHeight: "20px", height: 20 }}>{style.icon}</span>
                 <div className="min-w-0 flex-1">
-                  {n.title ? <p className="text-xs font-semibold mb-0.5">{n.title}</p> : null}
-                  <p className="text-xs whitespace-pre-wrap break-words">{n.message}</p>
+                  {n.title ? <p className="text-xs leading-5 font-semibold">{n.title}</p> : null}
+                  <p className="text-xs leading-5 whitespace-pre-wrap break-words">{n.message}</p>
                 </div>
                 {n.dismissible ? (
                   <button
                     type="button"
                     onClick={() => removeNotification(n.id)}
-                    className="text-current/70 hover:text-current"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center opacity-70 hover:opacity-100"
                     aria-label="Dismiss notification"
                   >
-                    <span className="material-symbols-outlined text-[16px]">close</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, lineHeight: 1 }}>close</span>
                   </button>
                 ) : null}
               </div>

@@ -8,7 +8,7 @@
 - **Vertex**: a service-account token mint that gets no HTTP response (connect timeout, reset) is retried once, and the log now names the cause. If the mint still fails, embeddings return 503 for that request. Before, they sent the stale token stored on the connection, got a 401, and locked the only account for 2 minutes. Mints are per slot, so this hit the first embedding after every deploy.
 - **Dashboard**: dragging a Claude/Codex connection to a new priority now reorders the list at once (it kept the old priority numbers until a reload); the "saved" toast waits for the save.
 - **Dashboard**: the Codex connection list drops the 5h quota column; Codex routes on the weekly window.
-- **Dashboard**: the Claude/Codex connection list uses the site's top-right toast instead of its own bottom text, with errors in red.
+- **Dashboard**: the Claude/Codex connection list uses the site's top-right toast instead of its own bottom text, with errors in red. The toast's icon, first text line and close button now share one line; the global icon rule had blown the icon up to 24px, so the text sat above it.
 - **Console Log**: stop forcing the view to the bottom. It follows new lines only while scrolled to the bottom; scrolling up freezes the view and shows "Paused · N new · jump to latest".
 - **Auth**: add `TRUSTED_PROXY_IPS` so a reverse proxy on a non-loopback address (the docker bridge gateway) can pass the client IP via `X-Real-IP`. Without it every client behind such a proxy shared one login-lockout bucket, so a single password scanner kept the dashboard login locked for everyone. Only `X-Real-IP` is honoured from these peers, never `X-Forwarded-For`.
 
