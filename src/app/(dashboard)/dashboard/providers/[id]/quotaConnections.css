@@ -359,3 +359,41 @@ html:not(.dark) .qcl .bsum-next .when{color:var(--warn-ink)}
 .qcl .ib.rs{display:inline-flex;align-items:center;justify-content:center;width:auto;min-width:28px;gap:2px;padding:0 6px;font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 .qcl .ib.rs .ms{font-size:16px}
 .qcl .ib.rs.has{color:var(--brand)}
+
+/* Login expiry (Claude ~28-day OAuth logins): row badge and the re-login panel,
+   from .preview/relogin-badges.html (version C). */
+.qcl .tag.lg{display:inline-flex;align-items:center;gap:3px;border:0;padding:0 6px 0 4px;font:inherit;font-size:10.5px;font-weight:650;line-height:18px}
+.qcl button.tag.lg{cursor:pointer}
+.qcl .tag.lg .ms{width:auto;height:auto;font-size:13px}
+.qcl .tag.lg.t-err{background:color-mix(in srgb,var(--err) 16%,transparent);color:var(--err-ink)}
+.qcl .tag.lg.t-warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn-ink)}
+.qcl button.tag.lg:hover{filter:brightness(1.12)}
+.qcl .tag.lg.pulse{animation:qcl-lg-pulse 2.2s ease-in-out infinite}
+@keyframes qcl-lg-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--err) 45%,transparent)}60%{box-shadow:0 0 0 4px color-mix(in srgb,var(--err) 0%,transparent)}}
+.qcl .rl{margin:12px 0 4px;overflow:hidden;border-radius:12px;border:1px solid color-mix(in srgb,var(--tone) 32%,var(--border-subtle));background:color-mix(in srgb,var(--tone) 6%,var(--surface))}
+.qcl .rl.t-muted{border-color:var(--border-subtle);background:var(--bg-alt)}
+.qcl .rl-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px}
+.qcl .rl-h .ms{font-size:18px;color:var(--ink)}
+.qcl .rl-h b{font-size:13.5px;font-weight:650}
+.qcl .rl-h .sub{color:var(--muted);font-size:12px}
+.qcl .rl-h .sp{flex:1}
+.qcl .rl-list{border-top:1px solid color-mix(in srgb,var(--tone) 18%,var(--border-subtle))}
+.qcl .rl-i{display:grid;grid-template-columns:10px minmax(120px,190px) minmax(0,1fr) auto;align-items:center;gap:12px;padding:8px 14px;border-top:1px solid var(--border-subtle)}
+.qcl .rl-i:first-child{border-top:0}
+.qcl .rl-i .dot{width:8px;height:8px}
+.qcl .rl-i .n{overflow:hidden;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
+.qcl .rl-i .n small{display:block;overflow:hidden;color:var(--subtle);font-size:11px;font-weight:400;text-overflow:ellipsis}
+.qcl .rl-i .w{min-width:0;color:var(--muted);font-size:12.5px;cursor:help}
+.qcl .rl-i .w b{color:var(--ink);font-weight:650}
+.qcl .rl-i .w .dim{margin-left:4px}
+.qcl .rl-f{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--border-subtle);color:var(--subtle);font-size:12px}
+.qcl .rl-f:first-child{border-top:0}
+.qcl .rl-f .ms{font-size:15px}
+.qcl .rl-f b{color:var(--muted);font-weight:600}
+.qcl .rl-f [data-tip]{cursor:help}
+.qcl .row.flash{animation:qcl-flash 1.4s ease-out}
+@keyframes qcl-flash{0%,30%{background:color-mix(in srgb,var(--brand) 16%,transparent)}100%{background:transparent}}
+@container qcl (max-width: 640px){
+  .qcl .rl-i{grid-template-columns:10px minmax(0,1fr) auto}
+  .qcl .rl-i .w{grid-column:2 / -1;grid-row:2}
+}

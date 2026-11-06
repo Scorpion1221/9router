@@ -10,7 +10,7 @@ import "./quotaConnections.css";
 import LimitResetDialog from "./LimitResetDialog";
 import {
   formatFull, formatWhen, formatDuration, parseUpstreamError, statusOf, rankWhenBack, weekBucket, rankNum,
-  modelName, winLabel, windowWord, windowsOf,
+  modelName, winLabel, windowWord, windowsOf, loginExpiry,
 } from "./quotaRouting";
 
 const POLL_MS = 30 * 1000;
@@ -123,6 +123,14 @@ export default function QuotaConnectionList({
       windows: v.windows || {}, modelWindows: v.modelWindows || [], conn: c,
     };
   }), [connections, viewById]);
+  // Logins that need re-authorizing (expired or ≤3 days left), most urgent first;
+  // ≤7 days goes in a "coming up" line. The panel lists enabled rows only, like the
+  // Feishu watcher; a disabled row still gets its badge. Re-authorize is Claude only.
+  const logins = useMemo(() => new Map(connections.map((c) => [c.id, loginExpiry(c, now)])), [connections, now]);
+  const needsLogin = (id) => ["dead", "err", "warn"].includes(logins.get(id)?.tier);
+  const relogin = accounts.filter((a) => a.active && needsLogin(a.id)).sort((x, y) => logins.get(x.id).rank - logins.get(y.id).rank);
+  const comingUp = accounts.filter((a) => a.active && logins.get(a.id)?.tier === "soon").sort((x, y) => logins.get(x.id).rank - logins.get(y.id).rank);
+  const [flashIds, setFlashIds] = useState(null);
   const strategy = view?.strategy || "fill-first";
   const isResetFirst = strategy === "reset-first";
   const effectiveMode = isResetFirst ? mode : "priority";
@@ -241,6 +249,66 @@ export default function QuotaConnectionList({
     return <Tip className={`rank ${a.order === "1" ? "use" : "queue"}`} text={a.order === "1" ? "Gateway order 1: the next request goes here" : `Gateway order ${a.order}`}>{a.order}</Tip>;
   };
 
+  const loginTag = (a, le) => {
+    const cls = `tag lg t-${le.tone}${le.tier === "dead" ? " pulse" : ""}`;
+    const body = <><Ic name={le.tier === "dead" ? "key_off" : "key"} />{le.tag}</>;
+    if (!onReauthorize) return <Tip className={cls} text={le.tip}>{body}</Tip>;
+    return <Tip as="button" type="button" className={cls} text={`Click to re-authorize; that restarts the 28 days. ${le.tip}`} onClick={() => onReauthorize(a.conn)}>{body}</Tip>;
+  };
+
+  const reloginPanel = () => {
+    if (!relogin.length && !comingUp.length) return null;
+    const dead = relogin.filter((a) => logins.get(a.id).tier === "dead").length;
+    const tone = dead || relogin.some((a) => logins.get(a.id).tier === "err") ? "err" : "warn";
+    return (
+      <div className={`rl t-${relogin.length ? tone : "muted"}`} role="region" aria-label="Logins to re-authorize">
+        {relogin.length > 0 && (
+          <>
+            <div className="rl-h">
+              <Ic name={dead ? "key_off" : "key"} />
+              <b>{relogin.length} login{relogin.length === 1 ? "" : "s"} need{relogin.length === 1 ? "s" : ""} re-authorizing</b>
+              <span className="sub">{dead > 0 && `${dead} already expired · `}Claude logins stop refreshing ~28 days after sign-in</span>
+              <span className="sp" />
+              <button className="link" type="button" onClick={() => {
+                setFlashIds(new Set(relogin.map((a) => a.id)));
+                setTimeout(() => rootRef.current?.querySelector(".row.flash")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+                setTimeout(() => setFlashIds(null), 1600);
+              }}><Ic name="filter_list" />Show in list</button>
+            </div>
+            <div className="rl-list">
+              {relogin.map((a) => {
+                const le = logins.get(a.id);
+                const email = a.conn.providerSpecificData?.accountEmail;
+                return (
+                  <div key={a.id} className={`rl-i t-${le.tone}`}>
+                    <i className="dot" />
+                    <div className="n" title={a.name}>{a.name}{email && email !== a.name && <small>{email}</small>}</div>
+                    <Tip className="w" text={le.tip}><b>{le.title}</b><span className="dim">· {le.detail}</span></Tip>
+                    {onReauthorize && (
+                      <button className={`btn sm ${le.tier === "dead" ? "btn-primary" : "btn-secondary"}`} type="button" onClick={() => onReauthorize(a.conn)}>
+                        <Ic name="key" />Re-authorize
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+        {comingUp.length > 0 && (
+          <div className="rl-f">
+            <Ic name="schedule" />Login expiry coming up:
+            {comingUp.map((a, i) => (
+              <Tip key={a.id} text={logins.get(a.id).tip}>
+                {i > 0 && ", "}<b>{a.name}</b> in {formatDuration(logins.get(a.id).left)}
+              </Tip>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const keepTip = (a) => `Keep ${a.keepPct}%: stops using this account once any window drops below ${a.keepPct}% left${a.releaseBeforeHours > 0 ? `. Ignored in the last ${a.releaseBeforeHours}h before the weekly reset` : ""}`;
 
   const nameCell = (a) => {
@@ -253,6 +321,7 @@ export default function QuotaConnectionList({
           <span className="nm-text" title={a.name}>{a.name}</span>
           {a.role === "reserve" && <Tip className="tag t-rsv" text="Reserve: only used when no normal account can take the request">Reserve</Tip>}
           {a.keepPct > 0 && <Tip className="tag" text={keepTip(a)}>Keep {a.keepPct}%</Tip>}
+          {needsLogin(a.id) && loginTag(a, logins.get(a.id))}
           <Ic name="expand_more" className="chev" />
         </div>
         <div className="meta">
@@ -510,6 +579,7 @@ export default function QuotaConnectionList({
       pinnedErr === a.id ? "has-pop" : "",
       isSelected(a.id) ? "is-sel" : "",
       testingId === a.id ? "is-testing" : "",
+      flashIds?.has(a.id) ? "flash" : "",
       dropHint?.id === a.id ? (dropHint.after ? "drop-after" : "drop-before") : ""].filter(Boolean).join(" ");
     return (
       <div key={a.id}>
@@ -592,6 +662,8 @@ export default function QuotaConnectionList({
           {stripRows.map((r) => <i key={r.a.id} className={`t-${r.st.tone}`} title={`${r.a.name} · ${r.st.label}${r.st.back ? ` · back ${formatWhen(r.st.back, now)}` : ""}`} />)}
         </div>
       </div>
+
+      {reloginPanel()}
 
       <div className="btools">
         {selectedCount > 0 ? (

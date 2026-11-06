@@ -1,6 +1,7 @@
 # Unreleased (fork)
 
 ## Features
+- **Claude**: flag logins that need re-authorizing on the connections card. Claude OAuth logins stop refreshing ~28 days after sign-in, so a panel above the list ranks the enabled ones that have expired (refresh token rejected) or are ≤3 days from `reauthorizedAt`/`createdAt` + 28 d, each with a Re-authorize button. Logins ≤7 days out go on a "coming up" line, and each affected row gets a badge. The API sends a `refreshTokenDead` flag derived from the server-side stamp, never the token.
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
 ## Fixes

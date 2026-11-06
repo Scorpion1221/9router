@@ -107,6 +107,48 @@ export function statusOf(a, { strategy, servingReserve, now }) {
   return { tone, label: b ? limitLabel(b.key) : errHuman(a.lastError), back: t, win: b?.key || null, group: "wait", tip: `${how}${t ? ` · back ${formatFull(t)}` : ""}` };
 }
 
+// A Claude login stops refreshing about 28 days after sign-in. Rotating the token does
+// not extend that; only a new login does. Same estimate as deploy/bwg/oauth_expiry_watch.py.
+const LOGIN_LIFETIME = { claude: 28 * DAY };
+
+/**
+ * Where an OAuth login is in its lifetime, for the re-login panel and badges; null when
+ * the provider has no known limit. tier: dead (refresh token rejected), err (≤24h left
+ * or past due), warn (≤3d), soon (≤7d), ok. rank sorts the most urgent first.
+ */
+export function loginExpiry(conn, now = Date.now()) {
+  const life = LOGIN_LIFETIME[conn?.provider];
+  if (!life || conn.authType !== "oauth") return null;
+  const loginAt = ts(conn.reauthorizedAt) || ts(conn.createdAt);
+  const since = loginAt ? `${conn.reauthorizedAt ? "Re-authorized" : "Signed in"} ${formatFull(loginAt)}. ` : "";
+  const why = "Claude logins stop refreshing ~28 days after sign-in; auto-refresh does not extend that.";
+  // Set by the API from the server-side dead-token stamp (see providerConnectionResponse.js).
+  if (conn.refreshTokenDead) {
+    const deadAt = ts(conn.refreshTokenDeadAt);
+    const tokenUntil = ts(conn.expiresAt);
+    const works = tokenUntil && tokenUntil > now ? tokenUntil - now : 0;
+    const rejected = `rejected${deadAt ? ` ${formatFull(deadAt)}` : ""}`;
+    const then = works ? `current token works ${formatDuration(works)} more` : "requests fail";
+    return {
+      tier: "dead", tone: "err", rank: (deadAt || 0) - 1e15,
+      tag: "Login expired", title: "Expired", detail: `refresh ${rejected} · ${then}`,
+      tip: `Refresh token ${rejected}; ${then}. ${since}${why}`,
+    };
+  }
+  if (!loginAt) return null;
+  const due = loginAt + life;
+  const left = due - now;
+  const tier = left <= DAY ? "err" : left <= 3 * DAY ? "warn" : left <= 7 * DAY ? "soon" : "ok";
+  const d = left > 0 ? formatDuration(left) : null;
+  return {
+    tier, tone: tier === "soon" || tier === "ok" ? "muted" : tier, rank: left, left,
+    tag: !d ? "Due now" : tier === "soon" || tier === "ok" ? `${Math.floor(left / DAY)}d left` : `Expires ${d.split(" ")[0]}`,
+    title: d ? `Expires in ${d}` : "Past ~28 days",
+    detail: d ? `~${formatFull(due)}` : "may stop refreshing any time",
+    tip: `${d ? `Estimated expiry ~${formatFull(due)} (in ${d})` : `Past the ~28 days (${formatFull(due)}); it can stop refreshing any time`}. ${since}${why}`,
+  };
+}
+
 export const rankNum = (o) => (!o ? Infinity : o[0] === "R" ? 1000 + Number(o.slice(1)) : Number(o));
 export const weekBucket = (a, at) => { const r = ts(a.windows?.["7d"]?.resetAt); return r && r > at + 6e4 ? Math.round(r / HOUR) : Infinity; };
 
