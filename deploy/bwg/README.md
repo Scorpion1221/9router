@@ -63,7 +63,9 @@ Rules:
 - Build before the overlap. Never build while two slots are running.
 - Never run `docker compose up/down 9router` or `docker restart 9router-*`.
   - To restart: run `rollout.sh` with a re-tagged copy of the same image. It refuses to deploy the image that is already live.
-- Find the process with `pgrep -f '^bash .*deploy/bwg/rollout.sh'`.
+- Is a run still going? `flock -n /run/lock/9router-rollout.lock true && echo idle || echo running` (the lock `rollout.sh` holds for its whole run).
+  - A finished run ends its log with `done:` or `ABORT:`.
+  - Don't use `pgrep -f` over ssh: the remote `bash -c '<your command>'` contains the pattern, so pgrep finds its own shell and reports a finished run as still running. To find the process anyway, use the bracket form: `pgrep -af '[d]eploy/bwg/rollout.sh'`.
   - `pkill -f rollout.sh` also kills your own ssh session.
 - `rollout.sh status` shows the live slot, both containers and their in-flight counts.
 - Logs: `docker logs 9router-green`.
