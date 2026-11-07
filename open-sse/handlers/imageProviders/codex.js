@@ -1,6 +1,6 @@
 // Codex (paid ChatGPT plans: Go/Plus/Pro/...) image generation via Responses API + SSE
 import { randomUUID } from "node:crypto";
-import { nowSec } from "./_base.js";
+import { nowSec, toImageUrl } from "./_base.js";
 import { PROVIDERS } from "../../config/providers.js";
 import { CODEX_CLI_VERSION } from "../../config/appConstants.js";
 
@@ -17,7 +17,12 @@ const CODEX_TOOL_IMAGE_MODELS = new Set([
   "gpt-image-2.5",
   "gpt-image-2.5-flare",
   "gpt-image-2.5-sunburst",
+  "gpt-image-2.6-flare",
+  "gpt-image-2.6-sunburst",
 ]);
+// Upstream SSE error types caused by the request itself (bad size, unsupported option):
+// answer 400 so the account is not locked for them.
+const CODEX_USER_ERROR_TYPES = /user_error|invalid_request/;
 
 function decodeOpenAIAuthClaims(token) {
   try {
@@ -53,12 +58,6 @@ function resolveCodexImageModels(model) {
     return { responsesModel: CODEX_IMAGES_MAIN_MODEL, toolModel: model };
   }
   return { responsesModel: stripImageSuffix(model), toolModel: null };
-}
-
-function toDataUrl(input) {
-  if (!input || typeof input !== "string") return null;
-  if (/^data:image\//i.test(input) || /^https?:\/\//i.test(input)) return input;
-  return `data:image/png;base64,${input}`;
 }
 
 function buildContent(prompt, refs, detail = CODEX_REF_DETAIL) {
@@ -100,6 +99,7 @@ async function parseStream(response, log, callbacks = {}) {
   let bytesReceived = 0;
   let lastProgressLogMs = 0;
   let usage = null;
+  let error = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -150,6 +150,15 @@ async function parseStream(response, log, callbacks = {}) {
         } catch {}
       }
 
+      // A rejected tool call arrives as HTTP 200 + `error` / `response.failed` events.
+      if ((eventName === "error" || eventName === "response.failed") && dataStr && !error) {
+        try {
+          const data = JSON.parse(dataStr);
+          const e = data?.error || data?.response?.error;
+          if (e?.message) error = { message: e.message, type: e.type, code: e.code, param: e.param };
+        } catch {}
+      }
+
       if ((eventName === "response.completed" || eventName === "response.done") && dataStr) {
         try {
           const data = JSON.parse(dataStr);
@@ -158,7 +167,13 @@ async function parseStream(response, log, callbacks = {}) {
       }
     }
   }
-  return { imageB64, usage };
+  return { imageB64, usage, error };
+}
+
+function noImageError(error) {
+  const err = new Error(error?.message || "Codex did not return an image. Account may not be entitled (paid ChatGPT plan required).");
+  if (error && CODEX_USER_ERROR_TYPES.test(error.type || "")) err.status = 400;
+  return err;
 }
 
 // SSE Response that pipes codex progress + partial + done events to client
@@ -170,12 +185,12 @@ function buildSseResponse(providerResponse, log, onSuccess, onUsage) {
         controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
       try {
-        const { imageB64: b64, usage } = await parseStream(providerResponse, log, {
+        const { imageB64: b64, usage, error } = await parseStream(providerResponse, log, {
           onProgress: (info) => send("progress", info),
           onPartialImage: (info) => send("partial_image", info),
         });
         if (!b64) {
-          send("error", { message: "Codex did not return an image. Account may not be entitled (paid ChatGPT plan required)." });
+          send("error", { message: noImageError(error).message, ...(error?.code ? { code: error.code } : {}), ...(error?.param ? { param: error.param } : {}) });
         } else {
           if (usage && onUsage) await onUsage(usage);
           if (onSuccess) await onSuccess();
@@ -201,6 +216,7 @@ function buildSseResponse(providerResponse, log, onSuccess, onUsage) {
 
 export default {
   stream: true,
+  supportsEdit: true,
   // ChatGPT Free accounts have the image_generation tool stripped server-side
   // (upstream returns 400 "Tool choice 'image_generation' must be specified with 'tools' parameter").
   // Unknown plan is allowed so accounts without plan claims keep working.
@@ -222,9 +238,15 @@ export default {
   },
   buildBody: (model, body) => {
     const refs = [];
-    if (Array.isArray(body.images)) body.images.forEach((i) => { const u = toDataUrl(i); if (u) refs.push(u); });
-    const single = toDataUrl(body.image);
+    if (Array.isArray(body.images)) body.images.forEach((i) => { const u = toImageUrl(i); if (u) refs.push(u); });
+    const single = toImageUrl(body.image);
     if (single) refs.push(single);
+    if (body.markup) {
+      // The hosted image_generation tool rejects `markup` ("Unknown parameter"); say so instead of dropping it.
+      const err = new Error("Codex image models do not support 'markup'; use 'mask' or an OpenAI API key provider.");
+      err.status = 400;
+      throw err;
+    }
     const detail = body.image_detail || CODEX_REF_DETAIL;
     const { responsesModel, toolModel } = resolveCodexImageModels(model);
     const imgTool = { type: "image_generation", output_format: (body.output_format || "png").toLowerCase() };
@@ -235,6 +257,8 @@ export default {
     if (body.size && body.size !== "") imgTool.size = body.size;
     if (body.quality && body.quality !== "") imgTool.quality = body.quality;
     if (body.background && body.background !== "") imgTool.background = body.background;
+    const mask = toImageUrl(body.mask);
+    if (mask && refs.length > 0) imgTool.input_image_mask = { image_url: mask };
     return {
       model: responsesModel,
       instructions: "",
@@ -245,7 +269,11 @@ export default {
       prompt_cache_key: randomUUID(),
       stream: true,
       store: false,
-      reasoning: toolModel ? { effort: "medium", summary: "auto" } : null,
+      // No reasoning block: the host model's effort becomes the tool's `complexity`, and the
+      // hosted gpt-image tools reject every complexity value ("Complexity 'medium' is not
+      // supported for this image model", live 2026-11-07). The OpenAI `complexity` field is not
+      // forwarded for the same reason.
+      reasoning: null,
     };
   },
   // Custom: codex parses SSE → either pipe to client or collect b64
@@ -253,10 +281,8 @@ export default {
     if (streamToClient) {
       return { sseResponse: buildSseResponse(response, log, onRequestSuccess, onUsage) };
     }
-    const { imageB64: b64, usage } = await parseStream(response, log);
-    if (!b64) {
-      throw new Error("Codex did not return an image. Account may not be entitled (paid ChatGPT plan required).");
-    }
+    const { imageB64: b64, usage, error } = await parseStream(response, log);
+    if (!b64) throw noImageError(error);
     if (usage && onUsage) await onUsage(usage);
     return { created: nowSec(), data: [{ b64_json: b64 }] };
   },

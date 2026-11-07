@@ -99,7 +99,7 @@ export async function handleImageGenerationCore({
   let requestBody;
 
   try {
-    url = adapter.buildUrl(model, credentials);
+    url = adapter.buildUrl(model, credentials, body);
     requestBody = await adapter.buildBody(model, body);
     headers = adapter.buildHeaders(credentials, requestBody, model, body);
   } catch (error) {
@@ -143,7 +143,7 @@ export async function handleImageGenerationCore({
       try {
         const retryBody = await adapter.buildBody(model, body);
         const retryHeaders = adapter.buildHeaders(credentials, retryBody, model, body);
-        const retryUrl = adapter.buildUrl(model, credentials);
+        const retryUrl = adapter.buildUrl(model, credentials, body);
         providerResponse = await fetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,
@@ -187,7 +187,7 @@ export async function handleImageGenerationCore({
       parsed = await providerResponse.json();
     }
   } catch (parseError) {
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, parseError.message || `Invalid response from ${provider}`);
+    return createErrorResult(parseError.status || HTTP_STATUS.BAD_GATEWAY, parseError.message || `Invalid response from ${provider}`);
   }
 
   if (onRequestSuccess) await onRequestSuccess();

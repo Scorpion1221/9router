@@ -40,16 +40,83 @@ function recordImageRequestUsage({ provider, model, connectionId, apiKey, endpoi
   }).catch(() => {});
 }
 
+// /v1/images/edits form fields sent as strings that adapters expect as numbers.
+const EDIT_NUMBER_FIELDS = ["n", "output_compression", "partial_images", "frame_count", "frame_duration_ms"];
+const EDIT_IMAGE_FIELDS = new Set(["image", "image[]", "images", "images[]"]);
+
+async function fileToDataUrl(file) {
+  const buf = Buffer.from(await file.arrayBuffer());
+  return `data:${file.type || "image/png"};base64,${buf.toString("base64")}`;
+}
+
+// One image reference from an edits request → data/http URL string. JSON bodies use
+// `{ image_url }`; `file_id` points at the client's own Files API and cannot be resolved here.
+function editRefToUrl(ref) {
+  if (typeof ref === "string") return ref || null;
+  if (ref && typeof ref === "object") {
+    if (ref.file_id) {
+      const err = new Error("Image 'file_id' references are not supported; send the image or an image_url");
+      err.expose = true;
+      throw err;
+    }
+    return ref.image_url || null;
+  }
+  return null;
+}
+
+/**
+ * Parse an OpenAI /v1/images/edits request (multipart from the SDKs, or the JSON form) into
+ * the body shape image adapters read: `images: [url]`, `mask: url`, `markup: url`.
+ */
+async function parseImageEditBody(request) {
+  const contentType = request.headers.get("content-type") || "";
+  let body;
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData();
+    body = { images: [] };
+    for (const [key, value] of form.entries()) {
+      const v = typeof value === "string" ? value : await fileToDataUrl(value);
+      if (EDIT_IMAGE_FIELDS.has(key)) body.images.push(v);
+      else body[key] = v;
+    }
+    for (const f of EDIT_NUMBER_FIELDS) {
+      if (typeof body[f] === "string" && body[f] !== "") body[f] = Number(body[f]);
+    }
+    if (typeof body.stream === "string") body.stream = body.stream === "true";
+  } else {
+    body = await request.json();
+    const refs = [...(Array.isArray(body.images) ? body.images : []), ...(body.image ? [body.image] : [])];
+    body.images = refs.map(editRefToUrl).filter(Boolean);
+    delete body.image;
+    for (const f of ["mask", "markup"]) {
+      if (body[f] !== undefined) body[f] = editRefToUrl(body[f]) || undefined;
+    }
+  }
+  return body;
+}
+
 /**
  * Handle image generation request
  * @param {Request} request
+ * @param {{ edit?: boolean }} [options] - edit: request came in on /v1/images/edits
  */
-export async function handleImageGeneration(request) {
+export async function handleImageGeneration(request, { edit = false } = {}) {
   let body;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+  if (edit) {
+    try {
+      body = await parseImageEditBody(request);
+    } catch (error) {
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, error?.expose ? error.message : "Invalid image edit body (expected multipart/form-data or JSON)");
+    }
+    if (!body.images.length) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: image");
+    // The gateway answers with one JSON image (or its own SSE via Accept), not OpenAI's edit event stream.
+    if (body.stream === true) return errorResponse(HTTP_STATUS.BAD_REQUEST, "stream=true is not supported on /v1/images/edits");
+  } else {
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+    }
   }
 
   const url = new URL(request.url);
@@ -83,7 +150,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname }),
+      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname, edit }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -91,14 +158,20 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname, edit });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint, edit = false } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
   const { provider, model } = modelInfo;
+
+  // Edits must reach an adapter that sends the source images (and mask) upstream; others
+  // would silently fall back to text-to-image.
+  if (edit && !getImageAdapter(provider)?.supportsEdit) {
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, `Provider '${provider}' does not support /v1/images/edits`);
+  }
 
   // noAuth providers — no credential needed
   if (NO_AUTH_PROVIDERS.has(provider)) {

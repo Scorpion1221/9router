@@ -26,6 +26,13 @@ export async function urlToBase64(url) {
   return Buffer.from(buf).toString("base64");
 }
 
+// Image reference → a form image APIs accept: http(s) URL or data URL; raw base64 is assumed PNG.
+export function toImageUrl(input) {
+  if (!input || typeof input !== "string") return null;
+  if (/^data:image\//i.test(input) || /^https?:\/\//i.test(input)) return input;
+  return `data:image/png;base64,${input}`;
+}
+
 export function nowSec() {
   return Math.floor(Date.now() / 1000);
 }

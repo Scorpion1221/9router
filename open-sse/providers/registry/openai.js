@@ -59,6 +59,8 @@ export default {
     { id: "whisper-1", name: "Whisper 1", params: ["language","response_format","temperature","prompt"], kind: "stt" },
     { id: "gpt-4o-transcribe", name: "GPT-4o Transcribe", params: ["language","response_format","temperature","prompt"], kind: "stt" },
     { id: "gpt-4o-mini-transcribe", name: "GPT-4o Mini Transcribe", params: ["language","response_format","temperature","prompt"], kind: "stt" },
+    { id: "gpt-image-2.6-flare", name: "GPT Image 2.6 Flare", params: ["n","size","quality","response_format"], kind: "image" },
+    { id: "gpt-image-2.6-sunburst", name: "GPT Image 2.6 Sunburst", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "gpt-image-2.5", name: "GPT Image 2.5", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "gpt-image-2.5-sunburst", name: "GPT Image 2.5 Sunburst", params: ["n","size","quality","response_format"], kind: "image" },
@@ -81,6 +83,10 @@ export default {
     format: "openai",
   },
   embeddingConfig: { baseUrl: "https://api.openai.com/v1/embeddings", authType: "apikey", authHeader: "bearer" },
-  imageConfig: { baseUrl: "https://api.openai.com/v1/images/generations" },
+  imageConfig: {
+    baseUrl: "https://api.openai.com/v1/images/generations",
+    // Requests carrying reference images (and POST /v1/images/edits) go here.
+    editUrl: "https://api.openai.com/v1/images/edits",
+  },
   searchViaChat: { defaultModel: "gpt-4o-mini", pricingUrl: "https://openai.com/api/pricing" },
 };

@@ -414,7 +414,7 @@ describe("handleImageGenerationCore", () => {
       { type: "image_generation", output_format: "png", size: "1024x1024", action: "generate", model: "gpt-image-2.5" },
     ]);
     expect(requestBody.tool_choice).toEqual({ type: "image_generation" });
-    expect(requestBody.reasoning).toEqual({ effort: "medium", summary: "auto" });
+    expect(requestBody.reasoning).toBeNull();
 
     const responseBody = await result.response.json();
     expect(responseBody.data[0].b64_json).toBe("base64codeximage");
