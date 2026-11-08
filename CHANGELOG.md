@@ -5,6 +5,12 @@
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
 ## Fixes
+- **Transport** (merging v0.5.116): keep upstream's capped keep-alive Agents and fresh-socket retry, with four changes.
+  - Stay on undici 7 and send through Node's fetch. undici 8's own fetch sent a global `FormData` body as the text `[object FormData]` and returned Responses that fail `instanceof Response`.
+  - The Agents follow the process's family-autoselection flags instead of forcing happy eyeballs on. Hosts without IPv6 that run `--no-network-family-autoselection` keep IPv4-only connects.
+  - TLS uses Node's default curve list unless `NINEROUTER_TLS_ECDH_CURVE` pins one. X25519-only pushed TLS 1.2 gateways without X25519 down to RSA key exchange, which has no forward secrecy.
+  - A headers timeout is never replayed on a fresh socket, because the upstream may already be generating (and billing) the request.
+- **Security**: `/api/oauth/commandcode/auto-import`, new in v0.5.116, returns the host's Command Code API key. It is now local-only and always needs a login, like the cursor/kiro/zed importers.
 - **Codex**: count credits on the connection list and in `9r quota`. Once a Pro account's weekly window hits 100%, upstream keeps serving it and bills its credit balance instead of answering 429. The list showed that account as "Weekly limit" and the next account as "In use", while the gateway was still sending traffic to the first one. Quota state now reads the balance from `x-codex-credits-*` response headers and the `wham/usage` poll. An account at 0% that still has credits shows "In use · on credits" with a credits chip and a Credits row in its details, and `9r quota` gets a credits column. Reset first still skips accounts at 0% and never spends credits; the tooltip now says so.
 - **Images**: add `POST /v1/images/edits` (OpenAI SDK multipart `image`/`image[]`/`mask`/`markup`, or the JSON `images: [{ image_url }]` form). It used to fall through to Next.js and answer `400 Invalid Server Action request` (multipart) or a 404 page (JSON). Codex sends the images plus `mask` → `input_image_mask` to the image_generation tool; OpenAI API keys go to `/v1/images/edits` (now also used by `/v1/images/generations` requests that carry reference images). Providers whose adapters drop reference images answer 400 instead of silently running text-to-image.
 - **Codex**: add GPT Image 2.6 Flare / Sunburst (`cx/gpt-image-2.6-flare`, `cx/gpt-image-2.6-sunburst`, also on `openai/`). Codex image requests no longer send a `reasoning` block: the host model's effort became the tool's `complexity`, which the hosted gpt-image tools now reject (`Complexity 'medium' is not supported for this image model`), so every `cx/gpt-image-*` request failed. Upstream SSE `error`/`response.failed` events are now reported with their real message (400 for request errors, no account lock) instead of "Account may not be entitled".
@@ -14,6 +20,39 @@
 - **Dashboard**: the Claude/Codex connection list uses the site's top-right toast instead of its own bottom text, with errors in red. The toast's icon, first text line and close button now share one line; the global icon rule had blown the icon up to 24px, so the text sat above it.
 - **Console Log**: stop forcing the view to the bottom. It follows new lines only while scrolled to the bottom; scrolling up freezes the view and shows "Paused · N new · jump to latest".
 - **Auth**: add `TRUSTED_PROXY_IPS` so a reverse proxy on a non-loopback address (the docker bridge gateway) can pass the client IP via `X-Real-IP`. Without it every client behind such a proxy shared one login-lockout bucket, so a single password scanner kept the dashboard login locked for everyone. Only `X-Real-IP` is honoured from these peers, never `X-Forwarded-For`.
+
+# v0.5.116 (2026-11-08)
+
+## Features
+- **CommandCode**: align data bridge with official CLI v1.88.5 and add credential auto-import
+- **Antigravity**: track and display a separate Gemini 4 Argon weekly/session quota
+- **Codex Image**: add GPT Image 2.6 models (`gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`)
+- **SenseNova**: add `sensenova-6.8-flash` and `glm-5.3`
+
+## Fixes
+- **Transport**: claude provider survives DPI-shaped networks (happy-eyeballs, undici 8, configurable TLS curve)
+- **Lazy Runtime**: fix lost named exports when loading CJS deps from the runtime dir
+- **OpenCode Go**: send Claude reasoning on the Messages transport
+- **Codex Image**: use native OAuth image generation safely
+- **Thinking**: keep thinking config on OpenAI tool-result turns (#5171)
+- **OpenCode Free**: alias "terminal" tool names the free tier 429-rejects (#5319)
+- **TTS**: list public voices without dashboard self-fetch auth (#1551)
+- **Translator**: retain Claude cache markers for DashScope targets (#2069)
+- **CLI**: launcher startup ~2.5x faster via PID-file process handling
+- **Gemini**: send concrete MIME for remote images instead of `image/*`
+- **Translator**: keep all Gemini tool results and follow-up parts (#2393)
+- **Codex Image**: drop `reasoning.effort` on tool requests, surface real upstream errors
+- **CLI**: ship `deepseek-pow-hash.js` next to the PoW worker (#5460)
+- **Web Fetch**: forward the selected output format to Jina and Tavily (#2239)
+- **Kiro**: stop splicing unserved regions into service hostnames; add `KIRO_INTEGRITY_GATE=off`
+- **Thinking**: preserve explicit DeepSeek thinking budgets on compat nodes (#5108)
+- **Tray**: report a tray that never started instead of claiming success
+- **Fetch**: stop reusing dead keep-alive sockets silently dropped by upstream edges
+- **CodeBuddy**: preserve client system prompts and sanitize CLI agent identity (intl WAF)
+- **OpenCode Go**: use current inference endpoints (`/zen/go/v1` retired)
+- **CLI Tools**: Add All Active Models now includes no-auth, alias and custom models (#5449)
+- **Runtime**: pass `--global=false` so npm hooks can't create stray global installs (#5443)
+- **Dedupe**: drop `tool_reference` blocks naming tools stripped by MCP dedupe (z.ai 400)
 
 # v0.5.112 (2026-10-28)
 

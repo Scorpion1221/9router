@@ -1,13 +1,51 @@
+import net from "node:net";
+import tls from "node:tls";
 import { Readable } from "stream";
-import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
+import {
+  MEMORY_CONFIG,
+  FRESH_RETRY_KEEPALIVE_TIMEOUT_MS,
+  STALE_SOCKET_ERROR_CODES,
+  NON_STALE_SOCKET_ERROR_CODES,
+  STALE_SOCKET_ERROR_SUBSTRINGS,
+  resolveKeepAliveTimeouts,
+  isFreshSocketReplayEnabled,
+} from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
 
+const proxyDispatchers = new Map();
+const directDispatchers = new Map();
+
+export function resetDirectDispatchersForTests() {
+  directDispatchers.clear();
+  proxyDispatchers.clear();
+}
+
+export function isStaleSocketError(error) {
+  if (!error || error.name === "AbortError" || isTlsCertError(error)) return false;
+  const code = error?.cause?.code || error?.code || "";
+  if (NON_STALE_SOCKET_ERROR_CODES.has(code)) return false;
+  if (STALE_SOCKET_ERROR_CODES.has(code)) return true;
+  const msg = `${error?.message || ""} ${error?.cause?.message || ""}`.toLowerCase();
+  return STALE_SOCKET_ERROR_SUBSTRINGS.some((sub) => msg.includes(sub));
+}
+
+// Fork: fetch through Node's own fetch, handing it the package's undici 7 Agents as
+// `dispatcher`. Upstream moved to undici 8 and fetches through the package's fetch,
+// because undici 8 Agents are rejected by Node's fetch (UND_ERR_INVALID_ARG). That
+// package fetch does not understand Node's global web classes: a global FormData body
+// goes out as the text "[object FormData]", fetch(new Request(...)) throws, and its
+// Response fails `instanceof Response` (measured on Node 22 and 24). undici 7 Agents
+// work with Node's fetch, keepAlive caps and connect options (autoSelectFamily,
+// ecdhCurve) included, so we stay on undici 7 and keep Node's fetch.
+//
 // Next bundles this module more than once (instrumentation + route chunks). If another
 // copy already patched globalThis.fetch, wrap the fetch that patch wraps, not the patch:
 // otherwise every call runs proxyAwareFetch twice and the outer pass (proxyOptions=null)
 // overrides the per-connection proxy the inner one chose.
 const originalFetch = globalThis.fetch?.__9rOriginalFetch || globalThis.fetch;
-const proxyDispatchers = new Map();
+function rawFetch(url, options) {
+  return originalFetch(url, options);
+}
 
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
 // Disabled: not in use. Kept commented for future re-enable.
@@ -231,47 +269,147 @@ function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
   return normalizeProxyUrl(proxyUrlRaw);
 }
 
-/**
- * Create proxy dispatcher lazily (undici-compatible)
- */
-async function getDispatcher(proxyUrl, insecure = false) {
-  const normalized = normalizeProxyUrl(proxyUrl);
-  if (!normalized && !insecure) return null;
+// ISP DPI (VN → api.anthropic.com) RSTs Node's default TLS ClientHello curve
+// list; a single curve rewrites the fingerprint enough to pass. Empirically:
+// default agent = ECONNRESET 100%, X25519 = through 100%.
+// Fork: default to Node's own curve list ("auto"); set NINEROUTER_TLS_ECDH_CURVE=X25519
+// on a network with that DPI. Offering only X25519 pushes TLS 1.2 upstreams without
+// X25519 support (the ddit gateways, measured from prod 2026-11-09) down to plain RSA
+// key exchange, which drops forward secrecy for every request carrying an API key.
+const TLS_ECDH_CURVE = process.env.NINEROUTER_TLS_ECDH_CURVE || tls.DEFAULT_ECDH_CURVE;
 
-  const key = `${normalized || "direct"}::${insecure ? "insecure" : "secure"}`;
+// autoSelectFamilyAttemptTimeout = happy eyeballs (RFC 8305): race both address
+// families, fall over in 250ms — replaces the old global ipv4first flag, which fixed
+// one broken-family network by breaking the other (see claude-code#20240).
+// requestTls must stay TLS-options-only (undici 8 rejects connect-level options there
+// with UND_ERR_INVALID_ARG).
+//
+// Fork: take both values from Node's process defaults instead of hardcoding true/250.
+// An explicit per-connection option beats the process flags, so a hardcoded `true`
+// silently re-enabled happy eyeballs on hosts started with
+// --no-network-family-autoselection. On a host with no IPv6 route, a 250ms stall on
+// the IPv4 attempt then fails the request against ENETUNREACH (2026-11-06 Vertex mint).
+// Node's defaults are true/250, so stock hosts behave exactly as upstream intends.
+function eyeballsConnect() {
+  return {
+    autoSelectFamily: net.getDefaultAutoSelectFamily(),
+    autoSelectFamilyAttemptTimeout: net.getDefaultAutoSelectFamilyAttemptTimeout(),
+  };
+}
+function buildConnectOptions(insecure) {
+  return { ...eyeballsConnect(), ecdhCurve: TLS_ECDH_CURVE, ...(insecure ? { rejectUnauthorized: false } : {}) };
+}
+
+function evictOldest(cacheMap) {
+  if (cacheMap.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
+    cacheMap.delete(cacheMap.keys().next().value);
+  }
+}
+
+async function getOrCreateDirectAgent(key, insecure, keepAliveTimeout, keepAliveMaxTimeout) {
+  const cached = directDispatchers.get(key);
+  if (cached) return cached;
+  const { Agent } = await import("undici");
+  evictOldest(directDispatchers);
+  const agent = new Agent({
+    connect: buildConnectOptions(insecure),
+    keepAliveTimeout,
+    keepAliveMaxTimeout,
+  });
+  directDispatchers.set(key, agent);
+  return agent;
+}
+
+/**
+ * Shared direct dispatcher with capped keep-alive TTL. Prevents undici from
+ * reusing idle sockets that upstream edges (NVIDIA NIM, Cloudflare) silently
+ * dropped without sending a TCP RST.
+ */
+export function getDirectDispatcher(insecure = false) {
+  const { keepAliveTimeout, keepAliveMaxTimeout } = resolveKeepAliveTimeouts();
+  const key = `direct::${insecure ? "insecure" : "secure"}::${keepAliveTimeout}::${keepAliveMaxTimeout}`;
+  return getOrCreateDirectAgent(key, insecure, keepAliveTimeout, keepAliveMaxTimeout);
+}
+
+/**
+ * No-keep-alive retry dispatcher (`keepAliveTimeout: 1ms`) — guarantees a fresh
+ * TCP/TLS connection after a poisoned pooled socket or a connect timeout.
+ */
+export function getFreshRetryDispatcher(insecure = false) {
+  const key = `fresh::${insecure ? "insecure" : "secure"}`;
+  return getOrCreateDirectAgent(
+    key,
+    insecure,
+    FRESH_RETRY_KEEPALIVE_TIMEOUT_MS,
+    FRESH_RETRY_KEEPALIVE_TIMEOUT_MS
+  );
+}
+
+/**
+ * Create proxy or direct dispatcher lazily (undici-compatible).
+ * Always returns a dispatcher — the direct path needs the custom Agent too,
+ * otherwise the default global agent's ClientHello gets RST-ed by DPI.
+ */
+async function getDispatcher(proxyUrl, insecure = false, forceFreshSocket = false) {
+  const normalized = normalizeProxyUrl(proxyUrl);
+  if (!normalized) {
+    return forceFreshSocket ? getFreshRetryDispatcher(insecure) : getDirectDispatcher(insecure);
+  }
+
+  const key = `${normalized}::${insecure ? "insecure" : "secure"}`;
   if (!proxyDispatchers.has(key)) {
     // Evict oldest entry if max size reached
     if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
       proxyDispatchers.delete(proxyDispatchers.keys().next().value);
     }
-    const { Agent, ProxyAgent } = await import("undici");
-    const connect = insecure ? { rejectUnauthorized: false } : undefined;
-    const dispatcher = normalized
-      ? new ProxyAgent({ uri: normalized, ...(insecure ? { requestTls: connect } : {}) })
-      : new Agent({ connect });
+    const { ProxyAgent } = await import("undici");
+    const dispatcher = new ProxyAgent({
+      uri: normalized,
+      connect: eyeballsConnect(),
+      requestTls: { ecdhCurve: TLS_ECDH_CURVE, ...(insecure ? { rejectUnauthorized: false } : {}) },
+    });
     proxyDispatchers.set(key, dispatcher);
   }
 
   return proxyDispatchers.get(key);
 }
 
-async function fetchWithTlsFallback(url, options, proxyUrl) {
+function isBodyReplaySafe(body) {
+  return !(body && typeof body.getReader === "function" && body.locked);
+}
+
+async function fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket = false) {
   try {
     // Protocol adapters may need Node's HTTP/1 transport on the direct path.
     // Keep proxy/no-proxy resolution and strict-proxy enforcement here.
     if (!proxyUrl && options.directFetch) return await options.directFetch(url, options);
-    const dispatcher = proxyUrl ? await getDispatcher(proxyUrl) : undefined;
-    return await originalFetch(url, dispatcher ? { ...options, dispatcher } : options);
+    const dispatcher = await getDispatcher(proxyUrl, false, forceFreshSocket);
+    return await rawFetch(url, { ...options, dispatcher });
   } catch (err) {
     const isStrictSsl = options.strictTls === true || process.env.STRICT_SSL === "true" || process.env.STRICT_SSL === "1";
     if (!isStrictSsl && isTlsCertError(err)) {
-      if (options.body && typeof options.body.getReader === "function" && options.body.locked) {
+      if (!isBodyReplaySafe(options.body)) {
         throw err;
       }
       // ponytail: in-memory insecure agent fallback for self-signed MITM corporate/antivirus certs
       console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
-      const insecureDispatcher = await getDispatcher(proxyUrl, true);
-      return await originalFetch(url, { ...options, dispatcher: insecureDispatcher });
+      const insecureDispatcher = await getDispatcher(proxyUrl, true, forceFreshSocket);
+      return await rawFetch(url, { ...options, dispatcher: insecureDispatcher });
+    }
+
+    // Stale keep-alive recovery: a pooled socket died before returning headers. Replay
+    // once on the fresh-socket dispatcher instead of waiting out the connect timeout.
+    if (
+      !proxyUrl
+      && !forceFreshSocket
+      && !options.directFetch
+      && !options.signal?.aborted
+      && isBodyReplaySafe(options.body)
+      && isFreshSocketReplayEnabled()
+      && isStaleSocketError(err)
+    ) {
+      dbg("FETCH", `stale keep-alive socket (${err.cause?.code || err.code || err.message}), retrying on fresh socket: ${url}`);
+      return await fetchWithTlsFallback(url, options, proxyUrl, true);
     }
     throw err;
   }
@@ -366,19 +504,20 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       "x-relay-target": `${parsed.protocol}//${parsed.host}`,
       "x-relay-path": `${parsed.pathname}${parsed.search}`,
     };
-    return originalFetch(vercelRelayUrl, { ...options, headers: relayHeaders });
+    return await rawFetch(vercelRelayUrl, { ...options, headers: relayHeaders });
   }
 
   const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
   const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
   const proxyUrl = connectionProxyUrl || envProxyUrl;
+  const forceFreshSocket = proxyOptions?.forceFreshSocket === true || options?.forceFreshSocket === true;
 
   // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof
   if (shouldBypassMitmDns(targetUrl)) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
-        return await fetchWithTlsFallback(url, options, proxyUrl);
+        return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
       } catch (proxyError) {
         // A cancelled request is not a proxy failure: never resend it direct.
         if (options.signal?.aborted) throw proxyError;
@@ -401,7 +540,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 
   if (proxyUrl) {
     try {
-      return await fetchWithTlsFallback(url, options, proxyUrl);
+      return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
     } catch (proxyError) {
       if (options.signal?.aborted) throw proxyError;
       // If strictProxy is enabled, fail hard instead of falling back to direct
@@ -409,7 +548,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
-      return fetchWithTlsFallback(url, options, null);
+      return fetchWithTlsFallback(url, options, null, forceFreshSocket);
     }
   }
 
@@ -433,7 +572,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 
   // got-scraping disabled — use native fetch directly
   // (Re-enable per-host by wrapping with tryGotScrapingFetch when needed)
-  return fetchWithTlsFallback(url, options, null);
+  return fetchWithTlsFallback(url, options, null, forceFreshSocket);
 }
 
 /**

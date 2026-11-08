@@ -277,6 +277,28 @@ describe("dashboard guard local-only access", () => {
     expect(response.status).toBe(403);
   });
 
+  // The Command Code auto-import route returns the host's API key in plain text, so it
+  // gets the same gates as the cursor/kiro/zed importers: local-only and always-auth.
+  it("keeps the Command Code auto-import route local-only and behind login even when requireLogin=false", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: false });
+
+    const remote = await proxy(request("/api/oauth/commandcode/auto-import", { host: "router.example.com" }));
+    expect(remote.status).toBe(403);
+
+    const localNoJwt = await proxy(localRequest("/api/oauth/commandcode/auto-import", {
+      host: "localhost:20128",
+      origin: "http://localhost:20128",
+    }));
+    expect(localNoJwt.status).toBe(401);
+
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    const localWithJwt = await proxy({
+      ...localRequest("/api/oauth/commandcode/auto-import", { host: "localhost:20128", origin: "http://localhost:20128" }),
+      cookies: { get: vi.fn(() => ({ value: "jwt" })) },
+    });
+    expect(localWithJwt).toBe(mocks.nextResponse);
+  });
+
   it("allows local-only route with valid CLI token", async () => {
     const response = await proxy(request("/api/mcp/filesystem/sse", {
       host: "router.example.com",
