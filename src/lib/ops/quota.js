@@ -54,10 +54,15 @@ export async function getConnectionQuota(connectionId, { force = false } = {}) {
       remainingPct: getRemainingPercentage(q),
       resetAt: toIso(q.resetAt),
     }));
+  const c = usage?.credits;
   return {
     supported: true,
     plan: typeof usage?.plan === "string" ? usage.plan : null,
     message: typeof usage?.message === "string" ? redactSecrets(usage.message) : null,
     rows,
+    // Codex: the balance upstream bills once the included windows are used up.
+    credits: c && typeof c === "object"
+      ? { hasCredits: c.hasCredits === true, unlimited: c.unlimited === true, balance: Number.isFinite(c.balance) ? c.balance : null }
+      : null,
   };
 }

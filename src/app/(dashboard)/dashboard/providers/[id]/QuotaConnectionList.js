@@ -11,7 +11,7 @@ import LimitResetDialog from "./LimitResetDialog";
 import { useNotificationStore } from "@/store/notificationStore";
 import {
   formatFull, formatWhen, formatDuration, parseUpstreamError, statusOf, rankWhenBack, weekBucket, rankNum,
-  modelName, winLabel, windowWord, windowsOf, loginExpiry,
+  modelName, winLabel, windowWord, windowsOf, loginExpiry, formatCredits, creditsSentence,
 } from "./quotaRouting";
 
 const POLL_MS = 30 * 1000;
@@ -374,6 +374,7 @@ export default function QuotaConnectionList({
         <Tip className={`chip t-${st.tone}${st.cls ? ` ${st.cls}` : ""}`} text={st.tip}>
           <span className="dot" /><span className="lbl">{st.label}</span>
           {st.back && <span className="t">back {formatWhen(st.back, now)}</span>}
+          {st.note && <span className="t">{st.note}</span>}
         </Tip>
         {st.group === "wait" && errDisclosure(a, st)}
       </>
@@ -388,7 +389,7 @@ export default function QuotaConnectionList({
     if (st.group === "rot" && a.active) cls += p < Math.max(15, a.keepPct + 10) ? " low" : " good";
     else if (a.active && st.win === key) cls += ` block t-${st.tone}`;
     const r = ts(w.resetAt);
-    const tip = `${key === "5h" ? "5h window" : "Weekly window"} · ${p}% left · ${r ? (r > now ? `resets ${formatFull(r)}` : "reset passed") : "idle, starts with the next request"} · read ${ago(w.observedAt, now)}${a.keepPct > 0 ? ` · tick = keep ${a.keepPct}%` : ""}`;
+    const tip = `${key === "5h" ? "5h window" : "Weekly window"} · ${p}% left · ${r ? (r > now ? `resets ${formatFull(r)}` : "reset passed") : "idle, starts with the next request"} · read ${ago(w.observedAt, now)}${a.keepPct > 0 ? ` · tick = keep ${a.keepPct}%` : ""}${a.onCredits && p <= 0 ? " · serving on credits" : ""}`;
     return (
       <Tip as="div" className={cls} text={tip}>
         {ql}
@@ -403,6 +404,15 @@ export default function QuotaConnectionList({
     const tone = st.win === m.window ? st.tone : p <= 20 ? "warn" : "muted";
     return <Tip key={m.window} className={`mw t-${tone}`} text={`${modelName(m.window)} weekly window · ${p}% left${m.resetAt ? ` · resets ${formatFull(ts(m.resetAt))}` : ""}`}>{modelName(m.window)} {p}%</Tip>;
   });
+
+  // Codex credit balance: upstream bills it once the included quota is used up.
+  const creditChip = (a) => {
+    const c = a.credits;
+    if (!c || !(c.hasCredits || c.unlimited)) return null;
+    const amount = c.unlimited ? "∞" : formatCredits(c.balance, { short: true });
+    const text = `${creditsSentence(a)} · read ${ago(c.observedAt, now)}`;
+    return <Tip key="credits" className={`mw cr t-${a.onCredits ? "info" : "muted"}`} text={text}>{a.onCredits ? "On credits" : "Credits"} {amount}</Tip>;
+  };
 
   const menu = (a) => {
     const isOpen = open.has(a.id);
@@ -468,6 +478,8 @@ export default function QuotaConnectionList({
 
   const nowLine = (a, st) => {
     if (!a.active) return "Disabled: never selected.";
+    if (a.onCredits && a.order === "1") return `Gets the next request. ${creditsSentence(a)}.`;
+    if (a.onCredits) return `${a.order ? `Ready, #${a.order} in line. ` : ""}${creditsSentence(a)}.`;
     if (a.order === "1") return "Gets the next request. Normal accounts go earliest weekly reset first.";
     if (a.order?.[0] === "R") return `Standby: takes traffic only when no normal account can${a.keepPct ? `, and stops at keep ${a.keepPct}%` : ""}.`;
     if (a.order) return `Ready, #${a.order} in line.`;
@@ -512,6 +524,14 @@ export default function QuotaConnectionList({
                     </tr>
                   );
                 })}
+                {a.credits && (
+                  <tr className={a.onCredits ? "hit t-info" : ""}>
+                    <td>Credits</td>
+                    <td className="p">{a.credits.unlimited ? "Unlimited" : formatCredits(a.credits.balance)}</td>
+                    <td className="dim">{a.onCredits ? "billed now: included quota used up" : a.credits.hasCredits || a.credits.unlimited ? "spent once included quota runs out" : "none: a used-up window means a 429"}</td>
+                    <td className="dim">{ago(a.credits.observedAt, now)} · {a.credits.source || ""}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           ) : <p className="dim">No quota reading yet. It fills in from traffic and a 15-minute poll.</p>}
@@ -595,7 +615,7 @@ export default function QuotaConnectionList({
           <div className="c-status">{statusCell(a, st)}</div>
           <div className="c-quota">
             {show5h && <div className="c-q5">{bar(a, a.windows["5h"], "5h", st)}</div>}
-            <div className="c-qw">{bar(a, a.windows["7d"], "7d", st)}{modelChips(a, st)}</div>
+            <div className="c-qw">{bar(a, a.windows["7d"], "7d", st)}{modelChips(a, st)}{creditChip(a)}</div>
           </div>
           <div className="c-act">{actCell(a)}</div>
         </div>

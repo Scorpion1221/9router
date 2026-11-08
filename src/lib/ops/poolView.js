@@ -4,7 +4,7 @@
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
 import { getSettings } from "@/lib/db/repos/settingsRepo.js";
 import { isModelLockActive, getBlockingLockUntil } from "open-sse/services/accountFallback.js";
-import { getQuotaSnapshot, isQuotaProvider, remainingPct } from "open-sse/services/quotaState.js";
+import { getQuotaSnapshot, isQuotaProvider, remainingPct, creditsUsable } from "open-sse/services/quotaState.js";
 import { rankResetFirst, accountPolicy } from "open-sse/services/resetFirst.js";
 import { publicConnection } from "./views.js";
 import { opsError } from "./auth.js";
@@ -14,6 +14,11 @@ const iso = (ms) => (ms ? new Date(ms).toISOString() : null);
 function windowView(w, now) {
   if (!w) return null;
   return { remainingPct: Math.round(remainingPct(w, now)), resetAt: iso(w.resetAt), observedAt: iso(w.observedAt), source: w.source };
+}
+
+function creditView(c) {
+  if (!c) return null;
+  return { hasCredits: c.hasCredits, unlimited: c.unlimited, balance: c.balance, observedAt: iso(c.observedAt), source: c.source };
 }
 
 /** Effective strategy for a provider, as getProviderCredentials resolves it. */
@@ -54,6 +59,10 @@ export async function providerPoolView(provider, { model = null } = {}) {
     const modelWindows = Object.entries(snap?.windows || {})
       .filter(([k]) => k.includes(":"))
       .map(([k, w]) => ({ window: k, ...windowView(w, now) }));
+    // Codex: an account-wide window is used up, yet upstream keeps serving the
+    // account from its credit balance, so the gateway still sends it requests.
+    const onCredits = state === "ready" && creditsUsable(snap?.credits)
+      && ["5h", "7d"].some((k) => snap.windows?.[k] && remainingPct(snap.windows[k], now) <= 0);
     return {
       ...publicConnection(c),
       ...accountPolicy(c),
@@ -63,6 +72,8 @@ export async function providerPoolView(provider, { model = null } = {}) {
       eligibleAt: strategy === "reset-first" && block ? iso(block.eligibleAt) : null,
       windows: { "5h": windowView(snap?.windows?.["5h"], now), "7d": windowView(snap?.windows?.["7d"], now) },
       modelWindows,
+      credits: creditView(snap?.credits),
+      onCredits,
       quotaUpdatedAt: iso(snap?.updatedAt),
     };
   });

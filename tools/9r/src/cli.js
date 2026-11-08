@@ -213,6 +213,8 @@ COMMANDS.accounts = {
 };
 
 const pctOf = (w) => (w ? `${w.remainingPct}%` : "-");
+// Codex credit balance: "-" when the account has none to fall back on.
+const creditsOf = (c) => (!c || !(c.hasCredits || c.unlimited) ? "-" : c.unlimited ? "unlimited" : String(Math.round(c.balance ?? 0)));
 
 async function providerQuota(flags) {
   const res = await api("/quota", { query: { provider: flags.provider, model: flags.model } });
@@ -226,13 +228,16 @@ async function providerQuota(flags) {
     week: pctOf(a.windows["7d"]),
     weekResets: until(a.windows["7d"]?.resetAt) ?? "-",
     models: a.modelWindows.map((w) => { const [len, scope] = w.window.split(":"); return `${scope}/${len} ${w.remainingPct}%`; }).join(" ") || "-",
+    ...(res.provider === "codex" ? { credits: creditsOf(a.credits) } : {}),
     state: a.state === "locked" ? `locked (${until(a.lockedUntil)})`
-      : a.eligibleAt ? `${a.state} (${until(a.eligibleAt)})` : a.state,
+      : a.eligibleAt ? `${a.state} (${until(a.eligibleAt)})`
+        : a.onCredits ? `${a.state} (on credits)` : a.state,
   }));
   const noData = res.accounts.filter((a) => a.active && !a.windows["5h"] && !a.windows["7d"]).length;
   const help = [];
   if (res.strategy !== "reset-first") help.push(`Strategy is ${res.strategy}${res.strategy === "round-robin" ? " (order not shown: it rotates)" : ""}; set Reset first on the ${res.provider} provider page to order by weekly reset`);
   if (noData) help.push(`${noData} account(s) have no quota reading yet (filled by traffic and a 15-min poll)`);
+  if (res.accounts.some((a) => a.onCredits)) help.push("\"on credits\": the included quota is used up and upstream bills the account's credit balance instead of answering 429");
   help.push("Run `9r accounts set <name> --role reserve --keep 30` to keep an account mostly for yourself");
   out({ provider: res.provider, strategy: res.strategy, ...(res.model ? { model: res.model } : {}), accounts: rows, help: help.slice(0, 3) });
   return 0;
@@ -268,6 +273,7 @@ COMMANDS.quota = {
     out({
       account: res.account.name, provider: res.account.provider, plan: res.plan || null,
       windows: res.rows.map((r) => ({ name: r.name, remaining: `${r.remainingPct}%`, resetsIn: until(r.resetAt) })),
+      ...(res.credits ? { credits: creditsOf(res.credits) } : {}),
     });
     return 0;
   },

@@ -72,6 +72,24 @@ export function blocking(a) {
   return zero[0];
 }
 
+const usableCredits = (c) => !!c && (c.unlimited === true || c.hasCredits === true);
+
+/** Codex credit balance, short ("36.3k") for chips and full ("36,325") for tooltips. */
+export function formatCredits(n, { short = false } = {}) {
+  if (!Number.isFinite(n)) return "?";
+  if (short && n >= 1000) return `${(n / 1000).toFixed(n >= 1e5 ? 0 : 1)}k`;
+  return Math.round(n).toLocaleString("en-US");
+}
+
+/** One sentence on an account's Codex credits, or null when it has none to spend. */
+export function creditsSentence(a) {
+  const c = a.credits;
+  if (!usableCredits(c)) return null;
+  const left = c.unlimited ? "unlimited credits" : `${formatCredits(c.balance)} credits left`;
+  if (a.onCredits) return `Its included quota is used up, so upstream bills its credit balance (${left})`;
+  return `Has ${left}, spent once its included quota runs out`;
+}
+
 export function errHuman(raw) {
   const e = parseUpstreamError(raw);
   if (!e) return "Unavailable";
@@ -81,11 +99,25 @@ export function errHuman(raw) {
   return "Request failed";
 }
 
-// ONE status per account, derived from the gateway view.
-export function statusOf(a, { strategy, servingReserve, now }) {
+// ONE status per account, derived from the gateway view. An account the gateway
+// keeps serving on Codex credits (onCredits) stays in rotation, marked "on credits".
+export function statusOf(a, opts) {
+  const st = baseStatus(a, opts);
+  if (st.group === "rot" && a.onCredits) {
+    const creditTip = `. ${creditsSentence(a)}`;
+    return { ...st, note: "on credits", creditTip, tip: `${st.tip}${creditTip}` };
+  }
+  if (st.group === "wait" && opts.strategy === "reset-first" && a.state === "exhausted" && usableCredits(a.credits)) {
+    return { ...st, tip: `${st.tip}. ${creditsSentence(a)}; reset first never spends them` };
+  }
+  return st;
+}
+
+function baseStatus(a, { strategy, servingReserve, now }) {
   if (!a.active) return { tone: "muted", label: "Disabled", group: "off", tip: "Disabled: the gateway never selects it" };
-  // Other strategies don't skip an account whose window is empty; it still can't serve.
-  const empty = strategy !== "reset-first" && a.state === "ready" ? blocking(a) : null;
+  // Other strategies don't skip an account whose window is empty; it still can't
+  // serve, unless upstream bills its credits instead (onCredits).
+  const empty = strategy !== "reset-first" && a.state === "ready" && !a.onCredits ? blocking(a) : null;
   if (empty) {
     const r = ts(empty.resetAt);
     return { tone: r && r - now < DAY ? "warn" : "err", label: limitLabel(empty.key), back: r, win: empty.key, group: "wait", tip: `Usage shows the ${windowWord(empty.key)} window at 0%; ${strategy} still tries it and gets a 429${r ? ` · resets ${formatFull(r)}` : ""}` };

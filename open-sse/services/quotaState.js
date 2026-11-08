@@ -1,6 +1,6 @@
-// Live quota per account (Claude OAuth, Codex): window usage from upstream response
-// headers on every call plus a periodic usage-API poll, merged per window by
-// observation time. In memory only (per process); the poll refills it after a
+// Live quota per account (Claude OAuth, Codex): window usage (and the Codex credit
+// balance) from upstream response headers on every call plus a periodic usage-API
+// poll, merged per window by observation time. In memory only (per process); the poll refills it after a
 // restart. Also parses quota-exhausted 429s into an exact reset time for a lock.
 //
 // Window keys: "5h" and "7d" are account-wide; "7d:<scope>" / "5h:<scope>" only
@@ -67,9 +67,11 @@ export function parseQuotaHeaders(provider, headers, now = Date.now()) {
     return { windows, status: status || null, claim: claim || null, resetAtMs: reset ? reset * 1000 : null };
   }
 
-  // Codex: an image-generation call reports the image bucket in the same headers.
+  // Codex: the credit balance is account-wide, so read it from every response.
+  const credits = parseCodexCreditHeaders(headers, now);
+  // An image-generation call reports the image bucket in the same window headers.
   const active = getHeader(headers, "x-codex-active-limit");
-  if (active && /image/i.test(active)) return null;
+  if (active && /image/i.test(active)) return credits ? { windows, credits } : null;
   for (const slot of ["primary", "secondary"]) {
     const minutes = num(getHeader(headers, `x-codex-${slot}-window-minutes`));
     const key = lengthKey(minutes ? minutes * 60 : null);
@@ -83,8 +85,40 @@ export function parseQuotaHeaders(provider, headers, now = Date.now()) {
       source: "headers",
     };
   }
-  return Object.keys(windows).length ? { windows } : null;
+  return Object.keys(windows).length || credits ? { windows, credits } : null;
 }
+
+// "True"/"False" (any case) or 1/0, as the Codex CLI reads them; null when absent.
+function bool(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim().toLowerCase();
+  if (s === "true" || s === "1") return true;
+  if (s === "false" || s === "0") return false;
+  return null;
+}
+
+/**
+ * Codex credit balance from x-codex-credits-*. Once the included windows are used
+ * up, upstream keeps serving the account from this balance instead of answering 429.
+ */
+function parseCodexCreditHeaders(headers, now) {
+  const hasCredits = bool(getHeader(headers, "x-codex-credits-has-credits"));
+  const unlimited = bool(getHeader(headers, "x-codex-credits-unlimited"));
+  if (hasCredits === null && unlimited === null) return null;
+  return {
+    hasCredits: hasCredits === true,
+    unlimited: unlimited === true,
+    balance: num(getHeader(headers, "x-codex-credits-balance")),
+    observedAt: now,
+    source: "headers",
+  };
+}
+
+const newerReading = (prev, next) => {
+  if (!next) return prev || null;
+  if (!prev) return next;
+  return (next.observedAt || 0) >= (prev.observedAt || 0) ? next : prev;
+};
 
 // Claude representative claims that cover the whole account (vs one model family).
 const CLAUDE_ACCOUNT_CLAIMS = new Set(["five_hour", "seven_day"]);
@@ -121,11 +155,12 @@ export function recordQuotaHeaders(provider, connectionId, headers) {
   try {
     if (!connectionId || connectionId === "noauth" || !isQuotaProvider(provider)) return;
     const parsed = parseQuotaHeaders(provider, headers);
-    if (!parsed || !Object.keys(parsed.windows).length) return;
+    if (!parsed || (!Object.keys(parsed.windows).length && !parsed.credits)) return;
     const prev = store.snapshots.get(connectionId);
     store.snapshots.set(connectionId, {
       provider,
       windows: mergeWindows(prev?.windows, parsed.windows),
+      credits: newerReading(prev?.credits, parsed.credits),
       updatedAt: Date.now(),
     });
   } catch { /* quota tracking must never break a request */ }
@@ -174,12 +209,28 @@ export function windowsFromUsage(provider, usage) {
   return Object.keys(windows).length ? windows : null;
 }
 
+/** Codex credit balance from a usage-API result (open-sse/services/usage/codex.js). */
+export function creditsFromUsage(provider, usage) {
+  const c = usage?.credits;
+  if (provider !== "codex" || !c || typeof c !== "object") return null;
+  const observedAt = Number.isFinite(usage.fetchedAt) ? usage.fetchedAt : 0;
+  if (!observedAt) return null;
+  return { hasCredits: c.hasCredits === true, unlimited: c.unlimited === true, balance: num(c.balance), observedAt, source: "poll" };
+}
+
 /** Record a usage-API poll for one connection. Returns the merged snapshot or null. */
 export function recordQuotaPoll(provider, connectionId, usage, now = Date.now()) {
   const windows = windowsFromUsage(provider, usage);
-  if (!connectionId || !windows) return null;
+  const credits = creditsFromUsage(provider, usage);
+  if (!connectionId || (!windows && !credits)) return null;
   const prev = store.snapshots.get(connectionId);
-  const snap = { provider, windows: mergeWindows(prev?.windows, windows), updatedAt: now, polledAt: now };
+  const snap = {
+    provider,
+    windows: mergeWindows(prev?.windows, windows),
+    credits: newerReading(prev?.credits, credits),
+    updatedAt: now,
+    polledAt: now,
+  };
   store.snapshots.set(connectionId, snap);
   return snap;
 }
@@ -198,6 +249,11 @@ export function windowAppliesTo(key, model) {
   if (i < 0) return true;
   if (!model) return false;
   return String(model).toLowerCase().includes(key.slice(i + 1));
+}
+
+/** Codex keeps serving an account whose windows are used up while it has credits. */
+export function creditsUsable(credits) {
+  return !!credits && (credits.unlimited === true || credits.hasCredits === true);
 }
 
 /**

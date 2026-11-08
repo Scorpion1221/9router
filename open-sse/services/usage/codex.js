@@ -91,6 +91,19 @@ function appendCodexQuotaWindows(quotas, prefix, snapshot) {
   return added;
 }
 
+// Credit balance the account falls back to once its included windows are used up
+// (upstream keeps serving and charges it instead of answering 429).
+function codexCredits(data) {
+  const c = data?.credits;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return null;
+  const balance = toFiniteNumber(c.balance, NaN);
+  return {
+    hasCredits: c.has_credits === true,
+    unlimited: c.unlimited === true,
+    balance: Number.isFinite(balance) ? balance : null,
+  };
+}
+
 function getCodexReviewRateLimit(data) {
   if (data.code_review_rate_limit || data.review_rate_limit) {
     return data.code_review_rate_limit || data.review_rate_limit;
@@ -161,6 +174,7 @@ export async function getCodexUsage(accessToken, proxyOptions = null, providerSp
       reviewLimitReached: getCodexRateLimitBody(reviewRateLimit)?.limit_reached || false,
       sparkLimitReached: getCodexRateLimitBody(sparkRateLimit)?.limit_reached || false,
       resetCredits: { availableCount: availableResetCredits },
+      credits: codexCredits(data),
       quotas,
     };
   } catch (error) {

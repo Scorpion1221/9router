@@ -189,6 +189,8 @@
 .qcl .q.na .trk{background:repeating-linear-gradient(90deg,var(--track) 0 4px,transparent 4px 7px)}
 .qcl .keep{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;border-radius:2px;background:var(--text);opacity:.8}
 .qcl .mw{display:inline-flex;margin-top:5px;padding:0 6px;line-height:17px;border-radius:5px;background:color-mix(in srgb,var(--tone) 13%,transparent);color:var(--ink);font-size:10.5px;font-weight:600;cursor:help}
+.qcl .mw + .mw{margin-left:4px}
+.qcl .mw.cr{font-variant-numeric:tabular-nums}
 
 /* row actions */
 .qcl .ib{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:var(--subtle);cursor:pointer;transition:background-color .12s,color .12s}
