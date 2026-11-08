@@ -110,6 +110,14 @@ export const TABLES = {
     primaryKey: "PRIMARY KEY (scope, key)",
     indexes: ["CREATE INDEX IF NOT EXISTS idx_kv_scope ON kv(scope)"],
   },
+  // Cross-process OAuth refresh lease (repos/refreshLeaseRepo.js). Holds no token material.
+  refreshLeases: {
+    columns: {
+      connectionId: "TEXT PRIMARY KEY",
+      owner: "TEXT NOT NULL",
+      expiresAt: "INTEGER NOT NULL",
+    },
+  },
   usageHistory: {
     columns: {
       id: "INTEGER PRIMARY KEY AUTOINCREMENT",

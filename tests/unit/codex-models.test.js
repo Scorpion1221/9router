@@ -5,7 +5,7 @@ vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: mocks.fetch })
 vi.mock("@/lib/network/connectionProxy.js", () => ({ resolveConnectionProxyConfig: mocks.proxy }));
 vi.mock("@/lib/localDb.js", () => ({ getProviderConnections: mocks.connections }));
 vi.mock("@/lib/db/driver.js", () => ({ getAdapter: mocks.db }));
-vi.mock("@/sse/services/tokenRefresh", () => ({ refreshCodexToken: mocks.refresh, updateProviderCredentials: mocks.persist }));
+vi.mock("@/sse/services/tokenRefresh", () => ({ refreshProviderCredentials: mocks.refresh, updateProviderCredentials: mocks.persist }));
 const { normalizeCodexModels, resolveCodexModels, getCodexModelCatalog, clearCodexModelMemoryCache } = await import("@/lib/codexModels.js");
 const account = (id = "a", extra = {}) => ({ id, provider: "codex", isActive: true, accessToken: `secret-${id}`, providerSpecificData: { chatgptAccountId: `workspace-${id}` }, ...extra });
 const manifest = (id = "gpt-6-astra", context = 272000) => ({ models: [{ slug: id, display_name: id, visibility: "list", supported_in_api: true, context_window: context, max_context_window: 872000, input_modalities: ["text", "image"], supported_reasoning_levels: [{ effort: "low" }, { effort: "ultra" }], default_reasoning_level: "low", base_instructions: "PRIVATE_BASE_PROMPT" }] });
@@ -103,7 +103,7 @@ describe("account-scoped, version-aware discovery", () => {
     mocks.refresh.mockResolvedValue({ accessToken: "renewed", expiresIn: 3600 });
     let attempts = 0; mocks.fetch.mockImplementation(async (url) => url.includes("registry.npmjs.org") ? ok({ name: "@openai/codex", version: "0.153.4" }) : ++attempts === 1 ? new Response("expired", { status: 401 }) : ok(manifest()));
     const result = await resolveCodexModels(account("a", { refreshToken: "refresh-secret" }));
-    expect(result.stale).toBe(false); expect(mocks.refresh).toHaveBeenCalledWith("refresh-secret");
+    expect(result.stale).toBe(false); expect(mocks.refresh).toHaveBeenCalledWith("codex", expect.objectContaining({ connectionId: "a", refreshToken: "refresh-secret" }));
     expect(mocks.persist).toHaveBeenCalledWith("a", { accessToken: "renewed", expiresIn: 3600 });
     expect(modelsCalls().at(-1)[1].headers).toMatchObject({ Authorization: "Bearer renewed", "ChatGPT-Account-ID": "workspace-a" });
   });

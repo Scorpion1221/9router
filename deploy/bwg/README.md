@@ -19,7 +19,7 @@ stopping it.
 | File | Purpose |
 |---|---|
 | `rollout.sh` | `deploy` (default), `status`, `rollback`, `migrate` (one-time) |
-| `oauth_handover.py` | `due`: minutes until the next single-use OAuth refresh. Gates every overlap of two instances. Also used by the original host move. |
+| `oauth_handover.py` | `due`: minutes until the next single-use OAuth refresh. Gates an overlap when either slot lacks the refresh lease (see below). Also used by the original host move. |
 | `rollout.env.example` | Host settings. Copy to `rollout.env` (git-ignored). `SITES` is required. |
 | `oauth_expiry_watch.py` + `oauth-expiry-watch.{service,timer}` | Daily Feishu reminder, 3 days before a Claude OAuth login reaches ~28 days (see below). |
 | `gateway_alert.py` + `gateway-alert.{service,timer}` | Every-minute Feishu alert when clients start getting errors or the gateway stops answering (see below). |
@@ -53,11 +53,25 @@ tail -f "$(ls -t /var/log/9router-rollout/rollout-*.log | head -1)"   # LOG_DIR 
 ```
 
 What the script does:
-1. Waits until no OAuth refresh is due for 10 min.
+1. Checks that both slots take the OAuth refresh lease (below). If they do, it goes straight on. If not, it waits until no OAuth refresh is due for 10 min.
 2. Starts the idle slot and health-gates it: `/api/health` plus a keyed `/v1/models`.
 3. Switches nginx and tags the new image `9router:rollback-<ts>`. The next build moves `9router:local`, and Docker's containerd image store deletes an image once its last tag is gone, so this tag keeps it.
 4. Waits 5 s, then `docker stop -t 1500` on the old slot. The old slot exits as soon as its last stream ends.
 5. Keeps the newest two `9router:rollback-*` tags (`KEEP_ROLLBACK`, default 2): the live image and the one before it. An image a container still uses is never removed.
+
+### OAuth refresh lease (why step 1 is instant)
+
+Claude/Codex refresh tokens are single-use. If two slots both refresh the same token, the second refresh revokes the login. Since 2026-11-09 the app guards every such refresh with a lease in the shared SQLite file (`src/lib/db/repos/refreshLeaseRepo.js`, table `refreshLeases`):
+- A slot takes the lease with one atomic UPSERT before it calls the token endpoint.
+- Under the lease it re-reads the stored row. If the other slot has already rotated the token, it uses the stored tokens instead of spending its own.
+- It saves the rotated tokens before it releases the lease.
+- A slot that finds the lease taken waits up to 20 s for the result. It never refreshes alongside the holder.
+- A lease left by a crashed slot expires after 90 s.
+- The lease row holds no token material.
+
+`rollout.sh` labels each slot `9router.refreshLease=1|0`, found by grepping the image for `__9rRefreshLeaseOwner`. It skips the quiet-window wait only when both the running slot and the incoming image have the lease, so the first deploy of a lease image still waits once. Rollback checks the same pair.
+
+Before this, step 1 often waited over an hour: 25 Claude logins refresh about every 4 h, so some refresh falls due roughly every 10 min. On 2026-11-08 a deploy aborted after an hour without a 10-min quiet window.
 
 Rules:
 - Build before the overlap. Never build while two slots are running.

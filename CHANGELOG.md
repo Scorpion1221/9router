@@ -5,6 +5,13 @@
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
 ## Fixes
+- **OAuth**: two 9router processes sharing one data dir can no longer spend the same single-use refresh token. During a rolling deploy both slots run at once, and if both refreshed one Claude/Codex token, the login was revoked. That is why `rollout.sh` waited for a 10-minute window with no refresh due. With 25 Claude logins such a window is rare, and a deploy on 2026-11-08 gave up after an hour.
+  - Refreshes of single-use tokens (Claude, Codex, Grok CLI, xAI, Nous) now take a lease row in the shared SQLite file (`refreshLeases`, no token material) with one atomic UPSERT.
+  - Under the lease the stored row is re-read. If the other process has already rotated the token, its tokens are used and nothing is spent. Rotated tokens are saved before the lease is released; that save skips a row that a re-login changed meanwhile.
+  - A process that finds the lease taken, or the DB busy (`SQLITE_BUSY`), waits up to 20 s, then skips rather than racing. A crashed holder's lease expires after 90 s. Only a lease table that can't be used at all (missing, read-only) falls back to the old unguarded refresh.
+  - On sql.js, which keeps the DB in memory and is not shared between processes, refresh falls back to the in-process lock only.
+  - The Codex model catalog's 401 retry now goes through the same path; it used to call the token endpoint directly.
+  - `rollout.sh` skips the quiet-window wait when both slots' images have the lease (label `9router.refreshLease`).
 - **Transport** (merging v0.5.116): keep upstream's capped keep-alive Agents and fresh-socket retry, with four changes.
   - Stay on undici 7 and send through Node's fetch. undici 8's own fetch sent a global `FormData` body as the text `[object FormData]` and returned Responses that fail `instanceof Response`.
   - The Agents follow the process's family-autoselection flags instead of forcing happy eyeballs on. Hosts without IPv6 that run `--no-network-family-autoselection` keep IPv4-only connects.

@@ -76,6 +76,11 @@ export const getAllAccessTokens = (userInfo) =>
 export const shouldRefreshCredentials = (provider, credentials) =>
   _shouldRefreshCredentials(provider, credentials);
 
+// Single-use refresh tokens (codex, claude, …): the per-connection lock plus the
+// cross-process lease, so two instances never spend the same token.
+export const refreshProviderCredentials = (provider, credentials) =>
+  _refreshProviderCredentials(provider, credentials, log);
+
 // ─── Lifecycle hook ───────────────────────────────────────────────────────────
 
 /**

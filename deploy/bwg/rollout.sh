@@ -36,9 +36,12 @@
 #     `rollout.sh rollback` starts it and flips back
 #   - one locked command that refuses to run in a state it doesn't expect, and an
 #     exit trap that leaves a consistent state if it is interrupted at any point
-#   - refresh tokens are single-use: an overlap only starts in a window where no
-#     refresh is due for longer than the overlap can last (oauth_handover.py due);
-#     a new-code slot stops its background refresher the moment it gets SIGTERM
+#   - refresh tokens are single-use. When both images take the cross-process
+#     refresh lease (src/lib/db/repos/refreshLeaseRepo.js), two slots can't spend
+#     the same token and the overlap starts at once. Otherwise it only starts in a
+#     window where no refresh is due for longer than the overlap can last
+#     (oauth_handover.py due). A new-code slot stops its background refresher the
+#     moment it gets SIGTERM
 #
 # Host-specific settings (nginx vhost files, paths) live in rollout.env next to this
 # script — copy rollout.env.example; it is not committed. See README.md for the
@@ -180,6 +183,20 @@ graceful_image() {  # IMAGE — 1 if the image drains on SIGTERM (has src/lib/sh
   docker run --rm --entrypoint sh "$1" -c 'grep -rqlF __9rShutdown /app/.next/server' >/dev/null 2>&1 && echo 1 || echo 0
 }
 
+lease_image() {  # IMAGE — 1 if the image takes the cross-process OAuth refresh lease
+  docker run --rm --entrypoint sh "$1" -c 'grep -rqlF __9rRefreshLeaseOwner /app/.next/server' >/dev/null 2>&1 && echo 1 || echo 0
+}
+
+# Both slots of the overlap take the refresh lease, so neither can spend a refresh
+# token the other is spending: no quiet window needed. A container started before
+# the lease label existed is checked by its image.
+overlap_is_leased() {  # OLD_CONTAINER NEW_IMAGE
+  local old_lease
+  old_lease=$(docker inspect -f '{{index .Config.Labels "9router.refreshLease"}}' "$1" 2>/dev/null || true)
+  [ -n "$old_lease" ] || old_lease=$(lease_image "$(docker inspect -f '{{.Image}}' "$1")")
+  [ "$old_lease" = 1 ] && [ "$(lease_image "$2")" = 1 ]
+}
+
 run_slot() {  # SLOT
   local slot=$1 envf rc=0
   envf=$(mktemp); chmod 600 "$envf"
@@ -192,6 +209,7 @@ run_slot() {  # SLOT
     --log-opt max-size=50m --log-opt max-file=5 \
     --label 9router.slot="$slot" --label 9router.image="$IMAGE" \
     --label 9router.graceful="$(graceful_image "$IMAGE")" \
+    --label 9router.refreshLease="$(lease_image "$IMAGE")" \
     --health-cmd "node -e \"require('http').get('http://127.0.0.1:$APP_PORT/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\"" \
     --health-interval 30s --health-timeout 5s --health-retries 5 --health-start-period 30s \
     "$IMAGE" >/dev/null || rc=$?
@@ -331,9 +349,14 @@ cmd_deploy() {
   log "deploy $IMAGE ($(docker image inspect -f '{{.Id}}' "$IMAGE" | cut -c8-19)): $live -> $idle"
 
   # The overlap lasts until the new slot is healthy (old one stops refreshing at
-  # SIGTERM right after), so a few minutes of quiet is enough.
-  log "1/4 wait for a refresh-quiet window"
-  wait_refresh_quiet 10 || die "no 10-min OAuth quiet window within an hour"
+  # SIGTERM right after). With the refresh lease on both sides it needs no quiet
+  # window; otherwise a few minutes of quiet is enough.
+  if overlap_is_leased "$old" "$IMAGE"; then
+    log "1/4 refresh lease on both slots: no quiet window needed"
+  else
+    log "1/4 wait for a refresh-quiet window (no refresh lease on both slots)"
+    wait_refresh_quiet 10 || die "no 10-min OAuth quiet window within an hour"
+  fi
 
   log "2/4 start $new (${IP[$idle]})"
   ensure_net
@@ -371,7 +394,11 @@ cmd_rollback() {
     timeout "$DRAIN_TIMEOUT" docker wait "$new" >/dev/null || die "$new did not exit; 'docker kill $new' to cut its remaining streams, then retry"
   fi
   log "rollback: $live -> $prev ($(docker inspect -f '{{index .Config.Labels "9router.image"}} {{.Image}}' "$new" | cut -c1-40))"
-  wait_refresh_quiet 10 || die "no OAuth quiet window"
+  if overlap_is_leased "$old" "$(docker inspect -f '{{.Image}}' "$new")"; then
+    log "  refresh lease on both slots: no quiet window needed"
+  else
+    wait_refresh_quiet 10 || die "no OAuth quiet window"
+  fi
   STAGE=starting NEW_C=$new OLD_C=$old
   docker start "$new" >/dev/null
   docker update --restart unless-stopped "$new" >/dev/null

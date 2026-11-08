@@ -6,7 +6,7 @@ import { getProviderConnections } from "./localDb.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { resolveConnectionProxyConfig } from "./network/connectionProxy.js";
-import { refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
+import { refreshProviderCredentials, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 
 const SCOPE = "codexModelCatalog";
 const TTL_MS = 10 * 60 * 1000;
@@ -142,7 +142,8 @@ export async function resolveCodexModels(connection, { forceRefresh = false } = 
     if ((response.status === 401 || response.status === 403) && connection.refreshToken) {
       await response.body?.cancel();
       stage = "token refresh";
-      const refreshed = await refreshCodexToken(connection.refreshToken);
+      // Shared lock + cross-process lease: the refresh token is single-use.
+      const refreshed = await refreshProviderCredentials("codex", { ...connection, connectionId: connection.id });
       if (refreshed?.accessToken) {
         stage = "token save";
         await updateProviderCredentials(connection.id, refreshed);

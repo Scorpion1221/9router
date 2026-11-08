@@ -14,7 +14,9 @@ An instance without refresh tokens keeps serving on its current access tokens
   due DB                    minutes until the next refresh would fire (active rows);
                             rows whose access token already expired, or whose
                             refresh token the app stamped as rejected, are listed
-                            under "stuck" instead of blocking.
+                            under "stuck" instead of blocking. rollout.sh only
+                            needs this when a slot lacks the refresh lease
+                            (src/lib/db/repos/refreshLeaseRepo.js).
 
 stdout only ever carries counts; tokens go to OUT.
 """
