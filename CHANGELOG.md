@@ -2,6 +2,7 @@
 
 ## Features
 - **Claude**: flag logins that need re-authorizing on the connections card. Claude OAuth logins stop refreshing ~28 days after sign-in, so a panel above the list ranks the enabled ones that have expired (refresh token rejected) or are ≤3 days from `reauthorizedAt`/`createdAt` + 28 d, each with a Re-authorize button. Logins ≤7 days out go on a "coming up" line, and each affected row gets a badge. The API sends a `refreshTokenDead` flag derived from the server-side stamp, never the token.
+- **Claude**: add Claude Fable 5.2 (`cc/claude-fable-5-2`, Bedrock `br/us.anthropic.claude-fable-5-2`): always-on adaptive thinking, 1M context, $8 / $40 per 1M (cache read $0.20, write $10, from OpenRouter). Forced `tool_choice` is sent as `auto`, as for Fable 5.1. The Claude Code version 9router reports goes from 2.1.280 to 2.1.321: Fable 5.2 answered 2.1.280 with `400 claude_code_version_too_old` (needs 2.1.290 or newer).
 - **Claude**: add Claude Haiku 5.5 (`claude-haiku-5-5`): adaptive thinking, 1M context, $0.10 / $0.50 per 1M. Claude Code passthrough keeps its adaptive thinking and effort instead of being rewritten to a 10k budget (that downgrade now only applies to Haiku before 5.x)
 
 ## Fixes

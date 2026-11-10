@@ -10,8 +10,8 @@ import "../translator/registerAll.js";
 // Fable 5/5.1 and Mythos 5/5.1 think adaptively and always: thinking "enabled"
 // and "disabled" are rejected with 400. The 5.1 releases also reject forced
 // tool_choice (any/tool); Fable 5 still accepts it.
-const ALWAYS_ON = ["claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1"];
-const NO_FORCED_TOOLS = ["claude-fable-5-1", "claude-mythos-5-1"];
+const ALWAYS_ON = ["claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1"];
+const NO_FORCED_TOOLS = ["claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5-1"];
 
 describe("Claude Fable / Mythos capabilities", () => {
   it.each(ALWAYS_ON)("%s is always-on adaptive thinking", (model) => {
@@ -27,6 +27,14 @@ describe("Claude Fable / Mythos capabilities", () => {
     expect(getCapabilitiesForModel("bedrock", "us.anthropic.claude-fable-5")).toMatchObject({
       thinkingFormat: "claude-adaptive",
       thinkingCanDisable: false,
+    });
+  });
+
+  it.each(["us.anthropic.claude-fable-5-2", "global.anthropic.claude-fable-5-2"])("covers Bedrock Fable 5.2 profile %s", (model) => {
+    expect(getCapabilitiesForModel("bedrock", model)).toMatchObject({
+      thinkingFormat: "claude-adaptive",
+      thinkingCanDisable: false,
+      contextWindow: 1000000,
     });
   });
 

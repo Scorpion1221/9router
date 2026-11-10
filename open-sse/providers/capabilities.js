@@ -93,8 +93,10 @@ export const MODEL_CAPABILITIES = {
     contextWindow: 1000000,
     maxOutput: 131072,
   },
-  // Claude Fable 5.1, Opus 5.5/5, 4.6/4.7/4.8, and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
+  // Claude Fable 5.2/5.1, Opus 5.5/5, 4.6/4.7/4.8, and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
   // Fable/Mythos 5.1 reject forced tool_choice (any/tool) with 400; Fable 5 still accepts it.
+  // Fable 5.2 is treated like 5.1 (forced tool_choice → auto): degrading to auto is safe, a 400 is not.
+  "claude-fable-5-2": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000, forcedToolChoice: false },
   "claude-fable-5-1": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000, forcedToolChoice: false },
   "claude-mythos-5-1": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000, forcedToolChoice: false },
   // Claude Opus 5.5 / Sonnet 5.5 dotted ids: Kiro preview (rateMultiplier: 2.0, 1M context) (#4410),

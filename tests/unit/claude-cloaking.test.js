@@ -10,9 +10,10 @@ import { describe, it, expect } from "vitest";
 import { applyCloaking, cloakClaudeTools, decloakStreamChunk } from "../../open-sse/utils/claudeCloaking.js";
 import { CLAUDE_TOOL_SUFFIX } from "../../open-sse/config/appConstants.js";
 
-it("advertises a Claude Code version accepted by Opus 5.5", () => {
+// Fable 5.2 rejects older clients with 400 claude_code_version_too_old (needs >= 2.1.290).
+it("advertises a Claude Code version accepted by Fable 5.2", () => {
   const body = applyCloaking({ messages: [] }, "sk-ant-oat-test", "session-id");
-  expect(body.system[0].text).toMatch(/^x-anthropic-billing-header: cc_version=2.1.280\./);
+  expect(body.system[0].text).toMatch(/^x-anthropic-billing-header: cc_version=2.1.321\./);
 });
 
 describe("cloakClaudeTools", () => {
