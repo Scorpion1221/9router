@@ -13,7 +13,12 @@ const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
 
 const BEDROCK_400 = JSON.stringify({ type: "error", error: { type: "invalid_request_error",
   message: "InvokeModelWithResponseStream: operation error Bedrock Runtime: InvokeModelWithResponseStream, https response error StatusCode: 400, RequestID: x, ValidationException: unsupported beta header(s): tool-search-tool-2025-10-19" } });
-const OTHER_400 = JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "messages.0.content: field required" } });
+// Wording Bedrock switched to on 2026-11-11.
+const BEDROCK_400_UNEXPECTED = JSON.stringify({ type: "error", error: { type: "invalid_request_error",
+  message: "InvokeModelWithResponseStream: operation error Bedrock Runtime: InvokeModelWithResponseStream, https response error StatusCode: 400, RequestID: x, ValidationException: Unexpected value(s) `tool-search-tool-2025-10-19` for the `anthropic-beta` header. Please consult our documentation at ***.***.com/docs or try again without the header. (request id: y)" } });
+const VALIDATION_400 = JSON.stringify({ type: "error", error: { type: "invalid_request_error",
+  message: "InvokeModelWithResponseStream: operation error Bedrock Runtime: InvokeModelWithResponseStream, https response error StatusCode: 400, RequestID: x, ValidationException: Input validation failed. Check your request parameters and retry the request. (request id: y)" } });
+const OTHER_400 =JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "messages.0.content: field required" } });
 
 function res(status, text = "") {
   return new Response(text || "{}", { status, headers: { "content-type": "application/json" } });
@@ -45,6 +50,23 @@ describe("anthropic-compatible: deferred-tools beta rejection", () => {
     expect(sent(1).tools.some((t) => "defer_loading" in t)).toBe(false);
     expect(sent(1).tools.map((t) => t.name)).toEqual(["Bash", "mcp__srv__op1", "mcp__srv__op2"]);
     expect(fetchMock.mock.calls[1][0]).toBe(fetchMock.mock.calls[0][0]);
+  });
+
+  it("also resends on the 'Unexpected value(s) … anthropic-beta' wording", async () => {
+    fetchMock.mockResolvedValueOnce(res(400, BEDROCK_400_UNEXPECTED)).mockResolvedValueOnce(res(200));
+    const ex = new DefaultExecutor("anthropic-compatible-test");
+    const out = await ex.execute({ model: "modelhub-claude/claude-opus-5-5", body: body(), stream: false, credentials: creds });
+    expect(out.response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sent(1).tools.some((t) => "defer_loading" in t)).toBe(false);
+  });
+
+  it("does not retry a Bedrock validation 400 that names no beta", async () => {
+    fetchMock.mockResolvedValueOnce(res(400, VALIDATION_400));
+    const ex = new DefaultExecutor("anthropic-compatible-test");
+    const out = await ex.execute({ model: "modelhub-claude/claude-opus-5-5", body: body(), stream: false, credentials: creds });
+    expect(out.response.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry other 400s", async () => {

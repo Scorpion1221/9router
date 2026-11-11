@@ -93,8 +93,10 @@ const REFRESH_GRANTS = Object.fromEntries(
 );
 
 // Bedrock-backed gateways reject Claude Desktop's deferred tools: the gateway itself adds
-// the tool-search beta for them, and Bedrock answers 400 with this text.
-const DEFERRED_TOOLS_REJECTED = /unsupported beta header\(s\)[^"]*tool-search-tool/i;
+// the tool-search beta for them, and Bedrock answers 400 naming that beta. Two wordings seen:
+// "unsupported beta header(s): tool-search-tool-…" and
+// "Unexpected value(s) `tool-search-tool-…` for the `anthropic-beta` header".
+const DEFERRED_TOOLS_REJECTED = /(?:unsupported beta header\(s\)|unexpected value\(s\))[^"]*tool-search-tool/i;
 
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
