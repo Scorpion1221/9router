@@ -5,7 +5,7 @@ const CODEX_EXTENDED_CONTEXT_WINDOW = 872000;
 
 // Codex CLI version seen by OpenAI's backend — single source for the Version /
 // User-Agent identity headers. Update only after upstream compatibility validation; no local CLI is invoked.
-const CODEX_CLI_VERSION = "0.159.0";
+const CODEX_CLI_VERSION = "0.167.1";
 const GPT_6_LITE_THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
 export default {

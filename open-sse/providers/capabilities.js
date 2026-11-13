@@ -246,11 +246,19 @@ export const PROVIDER_CAPABILITIES = {
   // NVIDIA NIM is OpenAI-compatible → rejects MiniMax/GLM native `thinking` field.
   // Force openai reasoning_effort format for its reasoning models. #issue
   "nvidia": {
-    "minimaxai/minimax-m2.7": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 131072 },
-    "minimaxai/minimax-m3": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 512000, maxOutput: 131072 },
-    "z-ai/glm-5.2": { reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 128000 },
-    "deepseek-ai/deepseek-v4-pro": { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
-    "deepseek-ai/deepseek-v4-flash": { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
+    "nvidia/nemotron-3.5-bolt-e4b": { tools: true, contextWindow: 128000, maxOutput: 8192 },
+    "nvidia/nemotron-3.5-lightning-30b-a3b": { tools: false, reasoning: true, thinkingFormat: "openai", contextWindow: 128000, maxOutput: 8192 },
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": { tools: false, reasoning: true, thinkingFormat: "openai", contextWindow: 128000, maxOutput: 8192 },
+    "nvidia/nemotron-3-ultra-550b-a55b": { tools: false, reasoning: true, thinkingFormat: "openai", contextWindow: 128000, maxOutput: 8192 },
+    "poolside/laguna-xs-2.1": { tools: true, contextWindow: 200000, maxOutput: 32000 },
+    "meta/llama-guard-4-12b": { tools: false, contextWindow: 128000, maxOutput: 4096 },
+    "nvidia/riva-translate-4b-instruct-v2": { tools: false, contextWindow: 128000, maxOutput: 4096 },
+    "meta/llama-3.3-70b-instruct": { tools: true, contextWindow: 128000, maxOutput: 4096 },
+    "minimaxai/minimax-m2.7": { tools: false, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 131072 },
+    "minimaxai/minimax-m3": { tools: false, vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 512000, maxOutput: 131072 },
+    "z-ai/glm-5.2": { tools: false, reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 128000 },
+    "deepseek-ai/deepseek-v4-pro": { tools: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
+    "deepseek-ai/deepseek-v4-flash": { tools: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
   },
   // glm-5.3-flash on OpenCode Go is served by a backend that rejects the z.ai
   // `thinking` object (400: unknown field "thinking") and wants reasoning_effort.
@@ -476,6 +484,15 @@ PROVIDER_CAPABILITIES.dv = PROVIDER_CAPABILITIES["devin-cli"];
 PROVIDER_CAPABILITIES.devin = PROVIDER_CAPABILITIES["devin-cli"];
 // The global mcode site serves the same catalog — share the capability table.
 PROVIDER_CAPABILITIES["minimax-code-global"] = PROVIDER_CAPABILITIES["minimax-code"];
+// SenseNova intl: limits from token.sensenova.ai/v1/models (context_length 262144,
+// max_output_length 65536, text+image in, reasoning) — below the CN 1M window, so
+// scoped to the intl provider; CN entries keep their own values.
+const SENSENOVA_INTL_CHAT = { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 262144, maxOutput: 65536 };
+PROVIDER_CAPABILITIES["sensenova-intl"] = {
+  "sensenova-6.8-flash": SENSENOVA_INTL_CHAT,
+  "sensenova-6.8-flash-lite": SENSENOVA_INTL_CHAT,
+  "sensenova-6.7-flash-lite": SENSENOVA_INTL_CHAT,
+};
 
 /**
  * Pattern fallback — glob (* = wildcard), matched case-insensitively and

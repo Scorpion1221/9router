@@ -50,8 +50,8 @@ describe("getCapabilitiesForModel", () => {
     }
   });
 
-  it("reports Claude Fable 5.1 as a permanent adaptive-thinking model", () => {
-    expect(getCapabilitiesForModel("claude", "claude-fable-5-1")).toMatchObject({
+  it("reports Claude Fable 5.2 as a permanent adaptive-thinking model", () => {
+    expect(getCapabilitiesForModel("claude", "claude-fable-5-2")).toMatchObject({
       ...claudeSonnet5Expected,
       thinkingCanDisable: false,
     });
@@ -265,12 +265,10 @@ describe("getCapabilitiesForModel — codebuddy-cn provider overrides", () => {
     expect(haiku55.contextWindow).toBe(1000000);
     expect(haiku55.maxOutput).toBe(128000);
 
-    // The override is provider-scoped: the global haiku pattern (claude-budget) still
-    // governs every other provider, including the bare/anthropic lookup.
-    // Fork: Haiku 5.x is adaptive everywhere (*claude*haiku-5* pattern, dd33ab78).
+    // The canonical 5.5 entry is adaptive everywhere else, while 4.5 keeps the
+    // extended-thinking shape the haiku pattern describes.
     expect(getCapabilitiesForModel(undefined, "claude-haiku-5-5").thinkingFormat).toBe("claude-adaptive");
-    // Fork: Haiku 5.x is adaptive everywhere (*claude*haiku-5* pattern, dd33ab78).
-    expect(getCapabilitiesForModel(undefined, "claude-haiku-5-5").thinkingFormat).toBe("claude-adaptive");
+    expect(getCapabilitiesForModel("claude", "claude-haiku-5-5").thinkingFormat).toBe("claude-adaptive");
     expect(getCapabilitiesForModel("opencode-go", "claude-haiku-4-5-20251001").thinkingFormat).toBe("claude-budget");
   });
 

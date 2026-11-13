@@ -106,8 +106,10 @@ describe("POST /v1/images/edits", () => {
     await POST(multipartEdit({ model: "cx/gpt-image-2.6-flare", prompt: "p" }, [
       ["image[]", PNG_BYTES, "image/png"], ["image[]", PNG_BYTES, "image/webp"],
     ]));
-    let images = upstreamBody().input[0].content.filter((c) => c.type === "input_image");
-    expect(images.map((i) => i.image_url)).toEqual([PNG_DATA_URL, PNG_DATA_URL.replace("image/png", "image/webp")]);
+    // No mask and default output controls: upstream v0.5.119 sends this to the native edits endpoint.
+    expect(global.fetch.mock.calls[0][0]).toMatch(/\/images\/edits$/);
+    expect(upstreamBody().images.map((i) => i.image_url)).toEqual([PNG_DATA_URL, PNG_DATA_URL.replace("image/png", "image/webp")]);
+    let images;
 
     global.fetch.mockReset();
     global.fetch.mockResolvedValueOnce(codexImage());
@@ -123,7 +125,8 @@ describe("POST /v1/images/edits", () => {
       ["error", { type: "error", error: { type: "image_generation_user_error", code: "invalid_value", message: "Complexity 'medium' is not supported for this image model.", param: "complexity" } }],
       ["response.failed", { response: { status: "failed", error: { type: "image_generation_user_error", message: "Complexity 'medium' is not supported for this image model." } } }],
     ]));
-    const res = await POST(jsonEdit({ model: "cx/gpt-image-2.6-flare", prompt: "p", images: [{ image_url: PNG_DATA_URL }] }));
+    // A mask keeps the edit on the Responses image tool (SSE), whose errors this covers.
+    const res = await POST(jsonEdit({ model: "cx/gpt-image-2.6-flare", prompt: "p", images: [{ image_url: PNG_DATA_URL }], mask: { image_url: MASK_DATA_URL } }));
 
     expect(res.status).toBe(400);
     expect(JSON.stringify(await res.json())).toContain("Complexity 'medium' is not supported");
