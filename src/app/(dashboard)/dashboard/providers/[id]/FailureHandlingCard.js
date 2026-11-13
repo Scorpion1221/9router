@@ -13,6 +13,7 @@ export default function FailureHandlingCard({ providerId }) {
   const notify = useNotificationStore();
   const [expanded, setExpanded] = useState(false);
   const [noLockOnTimeout, setNoLockOnTimeout] = useState(false);
+  const [noServerTools, setNoServerTools] = useState(false);
   const [breaker, setBreaker] = useState({ enabled: false, ...DEFAULT_BREAKER });
   const [saving, setSaving] = useState(false);
 
@@ -24,6 +25,7 @@ export default function FailureHandlingCard({ providerId }) {
         if (cancelled || !data) return;
         const cfg = (data.providerStrategies || {})[providerId] || {};
         setNoLockOnTimeout(cfg.noLockOnTimeout === true);
+        setNoServerTools(cfg.noServerTools === true);
         setBreaker({ ...DEFAULT_BREAKER, ...(cfg.breaker || {}), enabled: cfg.breaker?.enabled === true });
       })
       .catch(() => {});
@@ -44,9 +46,10 @@ export default function FailureHandlingCard({ providerId }) {
       // Re-read so keys other pages own (fallbackStrategy, sticky limit, …) survive.
       const settingsRes = await fetch("/api/settings", { cache: "no-store" });
       const current = (settingsRes.ok ? await settingsRes.json() : {}).providerStrategies || {};
-      const { noLockOnTimeout: _a, breaker: _b, ...kept } = current[providerId] || {};
+      const { noLockOnTimeout: _a, breaker: _b, noServerTools: _c, ...kept } = current[providerId] || {};
       const override = { ...kept };
       if (noLockOnTimeout) override.noLockOnTimeout = true;
+      if (noServerTools) override.noServerTools = true;
       if (breaker.enabled) {
         override.breaker = { enabled: true, threshold: Math.round(Number(breaker.threshold)), windowSec: Number(breaker.windowSec), cooldownSec: Number(breaker.cooldownSec) };
       }
@@ -67,9 +70,9 @@ export default function FailureHandlingCard({ providerId }) {
     } finally {
       setSaving(false);
     }
-  }, [noLockOnTimeout, breaker, providerId, notify]);
+  }, [noLockOnTimeout, noServerTools, breaker, providerId, notify]);
 
-  const active = noLockOnTimeout || breaker.enabled;
+  const active = noLockOnTimeout || noServerTools || breaker.enabled;
   const numberInput = (key, label, suffix) => (
     <label className="flex items-center gap-1.5 text-xs text-text-muted">
       {label}
@@ -107,6 +110,18 @@ export default function FailureHandlingCard({ providerId }) {
               </p>
             </div>
             <Toggle checked={noLockOnTimeout} onChange={setNoLockOnTimeout} />
+          </div>
+
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">No server tools</p>
+              <p className="text-xs text-text-muted">
+                The upstream can&apos;t run Anthropic server tools (web search/fetch, code execution, advisor, MCP connector),
+                e.g. Bedrock. A request with only those tools gets a 400 so the client does it another way and combos move
+                on; otherwise those tools are dropped.
+              </p>
+            </div>
+            <Toggle checked={noServerTools} onChange={setNoServerTools} />
           </div>
 
           <div className="flex flex-col gap-2">

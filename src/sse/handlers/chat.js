@@ -29,7 +29,7 @@ import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { recordRequestMetric, errorTypeForStatus, outcomeForStatus } from "@/lib/db/repos/requestMetricsRepo.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
-import { resolveFailurePolicy, breakerGate, recordProviderFailure, recordProviderSuccess } from "open-sse/services/providerBreaker.js";
+import { resolveFailurePolicy, breakerGate, recordProviderFailure, recordProviderSuccess, dropServerTools } from "open-sse/services/providerBreaker.js";
 
 // Per-request ops context: which model/combo the client asked for, and how
 // the last upstream stream attempt ended (set by the account loop), so the
@@ -382,6 +382,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       new Date(Date.now() + gate.retryAfterMs).toISOString(), `${Math.ceil(gate.retryAfterMs / 1000)}s`);
   }
   if (gate.probe) log.info("BREAKER", `${provider} half-open, sending a probe`);
+
+  if (failurePolicy.noServerTools) {
+    const st = dropServerTools(body);
+    if (st.reject) {
+      log.warn("CHAT", `[${provider}/${model}] server tools not supported here (${st.dropped.join(", ")}) → 400`);
+      return errorResponse(HTTP_STATUS.BAD_REQUEST,
+        `[${provider}/${model}] The ${st.dropped.join(", ")} tool is not available on this route. Do the task another way (for web search, use a different search tool such as a Tavily or other MCP/CLI web search).`);
+    }
+    if (st.body !== body) {
+      log.info("CHAT", `[${provider}/${model}] dropped server tools not supported here: ${st.dropped.join(", ")}`);
+      body = st.body;
+    }
+  }
 
   while (true) {
     if (clientSignal?.aborted) return clientGone();

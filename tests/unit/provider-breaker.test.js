@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  resolveFailurePolicy, recordProviderFailure, recordProviderSuccess, breakerGate, resetProviderBreakers,
+  resolveFailurePolicy, recordProviderFailure, recordProviderSuccess, breakerGate, resetProviderBreakers, dropServerTools,
 } from "../../open-sse/services/providerBreaker.js";
 
 const P = "anthropic-compatible-gw";
@@ -87,5 +87,51 @@ describe("provider breaker", () => {
     const pol = resolveFailurePolicy({}, P);
     for (let i = 0; i < 10; i++) expect(recordProviderFailure(P, pol, 1_000 + i)).toBe(false);
     expect(breakerGate(P, pol, 2_000).open).toBe(false);
+  });
+});
+
+describe("noServerTools", () => {
+  const ws = { type: "web_search_20250305", name: "web_search", max_uses: 8 };
+  const wf = { type: "web_fetch_20260209", name: "web_fetch" };
+  const ce = { type: "code_execution_20260521", name: "code_execution" };
+  const ts = { type: "tool_search_tool_regex_20251119", name: "tool_search_tool_regex" };
+  const bash = { name: "Bash", input_schema: { type: "object" } };
+
+  it("is off by default and read per provider", () => {
+    expect(resolveFailurePolicy({}, P).noServerTools).toBe(false);
+    expect(resolveFailurePolicy({ providerStrategies: { [P]: { noServerTools: true } } }, P).noServerTools).toBe(true);
+  });
+
+  it("rejects a request whose only tools are server tools (Claude Code WebSearch sub-call)", () => {
+    expect(dropServerTools({ tools: [ws] })).toMatchObject({ reject: true, dropped: ["web_search"] });
+    expect(dropServerTools({ tools: [{ ...ws, type: "web_search_20260209" }, wf] })).toMatchObject({ reject: true, dropped: ["web_search", "web_fetch"] });
+  });
+
+  it("drops server tools next to other tools without touching the caller's body", () => {
+    const body = { tools: [bash, ws, ce], tool_choice: { type: "tool", name: "web_search" } };
+    const out = dropServerTools(body);
+    expect(out.reject).toBe(false);
+    expect(out.dropped).toEqual(["web_search", "code_execution"]);
+    expect(out.body.tools).toEqual([bash]);
+    expect(out.body.tool_choice).toBeUndefined();
+    expect(body.tools).toHaveLength(3);
+  });
+
+  it("keeps tools Bedrock supports (tool search, client tools) and a forced choice on a kept tool", () => {
+    const out = dropServerTools({ tools: [bash, ts, ws], tool_choice: { type: "tool", name: "Bash" } });
+    expect(out.body.tools).toEqual([bash, ts]);
+    expect(out.body.tool_choice).toEqual({ type: "tool", name: "Bash" });
+  });
+
+  it("drops mcp_servers together with its mcp_toolset", () => {
+    const out = dropServerTools({ tools: [bash, { type: "mcp_toolset", mcp_server_name: "x" }], mcp_servers: [{ type: "url", url: "https://x", name: "x" }] });
+    expect(out.body.tools).toEqual([bash]);
+    expect(out.body.mcp_servers).toBeUndefined();
+  });
+
+  it("leaves requests without server tools alone", () => {
+    const body = { tools: [bash, ts] };
+    expect(dropServerTools(body)).toEqual({ reject: false, dropped: [], body });
+    expect(dropServerTools({}).reject).toBe(false);
   });
 });
