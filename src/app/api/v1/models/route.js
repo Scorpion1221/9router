@@ -7,7 +7,7 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getSettings } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveModelInfo } from "@/lib/modelInfo";
 import { getCodexModelCatalog } from "@/lib/codexModels";
@@ -390,6 +390,8 @@ export async function buildModelsList(kindFilter, options = {}) {
   // 9router instance's fetchCompatibleModelIds — skip dynamic fetch to break
   // cross-instance recursive loops.
   const skipDynamicFetch = options.skipDynamicFetch === true;
+  // Combos only: skip every provider catalog, including the remote /models fetches.
+  const combosOnly = options.combosOnly === true;
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -448,7 +450,7 @@ export async function buildModelsList(kindFilter, options = {}) {
   // These compatible providers have no static catalog. Fetch their remote
   // /models lists with bounded parallelism instead of adding each latency in
   // series to every client request.
-  const dynamicConnections = skipDynamicFetch ? [] : [...activeConnectionByProvider].filter(([providerId, conn]) => {
+  const dynamicConnections = skipDynamicFetch || combosOnly ? [] : [...activeConnectionByProvider].filter(([providerId, conn]) => {
     if (!providerMatchesKinds(providerId, kindFilter)) return false;
     if (!isOpenAICompatibleProvider(providerId) && !isAnthropicCompatibleProvider(providerId)) return false;
     const enabledModels = conn?.providerSpecificData?.enabledModels;
@@ -492,6 +494,8 @@ export async function buildModelsList(kindFilter, options = {}) {
     }
     models.push(entry);
   }
+
+  if (combosOnly) return models;
 
   if (connections.length === 0) {
     // DB unavailable -> return static models, filtered by per-model kind
@@ -801,11 +805,15 @@ export async function GET(request) {
   try {
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
+    let combosOnly = false;
+    try {
+      combosOnly = (await getSettings()).modelsListCombosOnly === true;
+    } catch { /* settings unavailable: full list */ }
     // Filter by the key's allow-list before enrichment so a restricted key
     // never sees (or pays metadata lookups for) models it cannot call.
     const baseData = await filterModelsListForKey(
       await getKeyAccessContext(request),
-      await buildModelsList([LLM_KIND], { skipDynamicFetch })
+      await buildModelsList([LLM_KIND], { skipDynamicFetch, combosOnly })
     );
     const data = await enrichWithMetadata(baseData);
     return Response.json({ object: "list", data }, {

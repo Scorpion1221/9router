@@ -67,6 +67,10 @@ const DEFAULT_SETTINGS = {
   pxpipeTimeoutMs: 15000,
   // Per-provider user header overrides applied at dispatch: { [providerId]: { headers: {..} } }
   providerOverrides: {},
+  // GET /v1/models lists only combos. Building and enriching every provider
+  // model (thousands with large compatible nodes) is synchronous work that
+  // blocks the event loop for seconds per call. Routing is unaffected.
+  modelsListCombosOnly: false,
 };
 
 async function readRaw() {
