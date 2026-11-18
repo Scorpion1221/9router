@@ -56,6 +56,10 @@ export default {
     },
   },
   models: [
+    // codex-rs/models-manager/models.json (2026-11-17): both use Responses Lite; Codex windows
+    // are 500k for Sol and 272k for Astra (the API model is 1.05M).
+    { id: "gpt-6.2-astra", name: "GPT 6.2 Astra", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS, contextWindow: CODEX_GPT_CONTEXT_WINDOW },
+    { id: "gpt-6.2-sol", name: "GPT 6.2 Sol", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS, contextWindow: 500000 },
     { id: "gpt-6.1-sol", name: "GPT 6.1 Sol", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS, contextWindow: CODEX_GPT_CONTEXT_WINDOW },
     { id: "gpt-6.1-terra", name: "GPT 6.1 Terra", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS, contextWindow: 500000 },
     { id: "gpt-6-astra", name: "GPT 6.0 Astra", contextWindow: CODEX_GPT_CONTEXT_WINDOW },

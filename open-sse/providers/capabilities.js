@@ -312,6 +312,11 @@ export const PROVIDER_CAPABILITIES = {
     "claude-haiku-5-5": { vision: true, reasoning: true, search: true, thinkingFormat: "commandcode", thinkingEffortSupported: true, contextWindow: 1000000, maxOutput: 128000 },
   },
   "codex": {
+    "gpt-6.2-astra":             CODEX_GPT_5_CAPS,
+    "gpt-6.2-astra-review":      CODEX_GPT_5_CAPS,
+    // models.json gives gpt-6.2-sol the same 500k Codex window as gpt-6.1-terra.
+    "gpt-6.2-sol":               { ...CODEX_GPT_5_CAPS, contextWindow: 500000 },
+    "gpt-6.2-sol-review":        { ...CODEX_GPT_5_CAPS, contextWindow: 500000 },
     "gpt-6.1-sol":               CODEX_GPT_5_CAPS,
     "gpt-6.1-sol-review":        CODEX_GPT_5_CAPS,
     // codex-rs/models-manager/models.json: gpt-6.1-terra has context_window 500000 on Codex
