@@ -71,3 +71,15 @@ describe("/v1/models modelsListCombosOnly", () => {
     expect(models).toEqual([expect.objectContaining({ id: "my-combo", object: "model", owned_by: "combo" })]);
   });
 });
+
+describe("matchPattern regex cache", () => {
+  it("returns the same answers on repeated calls with one pattern", async () => {
+    const { matchPattern } = await import("open-sse/providers/pricing.js");
+    for (let i = 0; i < 3; i++) {
+      expect(matchPattern("claude-*-opus*", "Claude-3-Opus-20240229")).toBe(true);
+      expect(matchPattern("claude-*-opus*", "gpt-6.2-sol")).toBe(false);
+      expect(matchPattern("gpt-6.2*", "gpt-6.2-sol")).toBe(true);
+      expect(matchPattern("a.b", "axb")).toBe(false);
+    }
+  });
+});

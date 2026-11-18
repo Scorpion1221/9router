@@ -408,8 +408,16 @@ export const PATTERN_PRICING = [
  * Match a model ID against a glob pattern (* = wildcard). Case-insensitive:
  * registry ids mix casing (e.g. "MiniMax-M2.5" vs "minimax-m2.5").
  */
+// Patterns come from the fixed tables in this directory, so the cache stays small.
+// Compiling per call cost ~110 ms of main-thread time to list ~1500 models.
+const patternRegexCache = new Map();
+
 export function matchPattern(pattern, model) {
-  const regex = new RegExp("^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i");
+  let regex = patternRegexCache.get(pattern);
+  if (!regex) {
+    regex = new RegExp("^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i");
+    patternRegexCache.set(pattern, regex);
+  }
   return regex.test(model);
 }
 
