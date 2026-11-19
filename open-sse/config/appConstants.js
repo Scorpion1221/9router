@@ -191,6 +191,9 @@ export const ANTIGRAVITY_PROMPT_REWRITES = [
   // but OpenAI-format clients (e.g. proxies that convert Claude Code to /v1/chat/completions)
   // pass it through, and any system text containing it gets a fake 429 RESOURCE_EXHAUSTED.
   { from: /^x-anthropic-billing-header:[^\n]*(?:\r?\n)*/gim, to: "" },
+  // Claude Code's built-in security paragraph. The parenthesized list after "Dual-use security
+  // tools" alone triggers the fake 429 (Claude and Gemini models alike); the sentence without it passes.
+  { from: /(Dual-use security tools)\s*\([^)]*\)/g, to: "$1" },
   { from: /opencode/gi, to: (m) => (m === "OpenCode" ? "Antigravity" : m === "OPENCODE" ? "ANTIGRAVITY" : "antigravity") }
 ];
 
