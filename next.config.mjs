@@ -70,6 +70,17 @@ const nextConfig = {
     };
     return config;
   },
+  // Provider logos are served with max-age=0, so every page that lists providers
+  // revalidated ~60 of them through the gateway's busy main thread (1-4 s each).
+  // They change rarely and in place, so a day of caching is enough.
+  async headers() {
+    return [
+      {
+        source: "/providers/:file*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=86400, stale-while-revalidate=604800" }],
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

@@ -947,7 +947,12 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const connectionQuotas = useConnectionQuotas(connections);
+  // Claude/Codex OAuth render QuotaConnectionList, which reads quota from the pool
+  // view. Per-account usage reads there were never shown, and each one was an
+  // upstream call queued on the gateway's main thread (39 per page load).
+  const connectionQuotas = useConnectionQuotas(
+    RESET_FIRST_PROVIDERS.has(providerId) && isOAuth ? [] : connections,
+  );
 
   // Show the new order at once, persist it in one request, and reload the
   // saved order if that fails so the list never disagrees with the server.
