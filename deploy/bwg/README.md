@@ -18,6 +18,7 @@ stopping it.
 
 | File | Purpose |
 |---|---|
+| `build-and-push.sh` | Default local `docker buildx` (`linux/amd64`) + `zstd` SSH stream into `bwg-9router` (`--deploy` also runs `rollout.sh`). Keeps build CPU/RAM off the production host. |
 | `rollout.sh` | `deploy` (default), `status`, `rollback`, `migrate` (one-time) |
 | `oauth_handover.py` | `due`: minutes until the next single-use OAuth refresh. Gates an overlap when either slot lacks the refresh lease (see below). Also used by the original host move. |
 | `rollout.env.example` | Host settings. Copy to `rollout.env` (git-ignored). `SITES` is required. |
@@ -45,9 +46,29 @@ stopping it.
 
 ## Every deploy
 
+Default: build `linux/amd64` locally with `docker buildx` and stream the image to `bwg-9router` over SSH (zero build CPU/RAM on the production VPS):
+
+```bash
+# 1. Push your branch (optional if only testing a local build, recommended so /root/9router stays in sync)
+git push origin develop
+
+# 2. Build locally for linux/amd64, push to bwg-9router, and roll out
+deploy/bwg/build-and-push.sh --deploy
+```
+
+Or run push and rollout separately:
+
+```bash
+deploy/bwg/build-and-push.sh
+ssh bwg-9router 'cd /root/9router && setsid nohup deploy/bwg/rollout.sh > /dev/null 2>&1 &'
+ssh bwg-9router 'tail -f "$(ls -t /var/log/9router-rollout/rollout-*.log | head -1)"'
+```
+
+Fallback (building on the host itself — avoid during active traffic because `next build --webpack` pins CPU for ~10 min and peaks ~2.4 GB RAM):
+
 ```bash
 cd /root/9router && git pull --ff-only origin develop
-docker compose build 9router > /tmp/9r-build.log 2>&1   # ~4 min, peak ~2.4 GB RAM
+nice -n 19 ionice -c 3 docker compose build 9router > /tmp/9r-build.log 2>&1
 setsid nohup deploy/bwg/rollout.sh > /dev/null 2>&1 &
 tail -f "$(ls -t /var/log/9router-rollout/rollout-*.log | head -1)"   # LOG_DIR from rollout.env
 ```
