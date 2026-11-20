@@ -3,6 +3,7 @@
  */
 
 import { FORMATS } from "../translator/formats.js";
+import { estimateJsonLength } from "./truncateJson.js";
 
 // Legacy per-chunk usage console line; off by default (superseded by "📊 done")
 const DEBUG_USAGE = process.env.LOG_USAGE_VERBOSE === "1";
@@ -342,21 +343,19 @@ export function mergeUsage(prev, next) {
 }
 
 /**
- * Estimate input tokens from request body
- * Calculate total body size for more accurate estimation
+ * Estimate input tokens from request body (or return a pre-computed token count).
+ * Walks the object graph without allocating a serialized JSON string so multi-MB
+ * prompts don't trigger large-object heap/mmap churn.
  */
 export function estimateInputTokens(body) {
+  if (typeof body === "number") return Number.isFinite(body) && body > 0 ? Math.ceil(body) : 0;
   if (!body || typeof body !== "object") return 0;
 
   try {
-    // Calculate total body size (includes messages, tools, system, thinking config, etc.)
-    const bodyStr = JSON.stringify(body);
-    const totalChars = bodyStr.length;
-
+    const { size: totalChars } = estimateJsonLength(body, Infinity);
     // Estimate: ~4 chars per token (rough average across all tokenizers)
     return Math.ceil(totalChars / 4);
-  } catch (err) {
-    // Fallback if stringify fails
+  } catch {
     return 0;
   }
 }

@@ -211,9 +211,27 @@ export async function getRequestMetricsSummary({ kind = "request", since, until 
 }
 
 /** Last successful upstream attempt per connection over the whole retention window. */
-export async function getLastOkByConnection({ provider } = {}) {
+export async function getLastOkByConnection({ provider, connectionIds } = {}) {
   await flushRequestMetrics();
   const db = await getAdapter();
+  // When the caller already knows the connection IDs (e.g. listAccounts), seek
+  // idx_rm_conn_ts backwards per connection with LIMIT 1 instead of scanning all
+  // provider rows across the retention window into a temp B-tree.
+  // Unary `+provider` keeps SQLite on idx_rm_conn_ts rather than idx_rm_provider_ts.
+  if (Array.isArray(connectionIds)) {
+    const out = new Map();
+    const sql = `SELECT ts FROM requestMetrics
+      WHERE connectionId = ? AND kind = 'attempt' AND outcome = 'ok' ${provider ? "AND +provider = ?" : ""}
+      ORDER BY ts DESC LIMIT 1`;
+    const seen = new Set();
+    for (const id of connectionIds) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const row = db.get(sql, provider ? [id, provider] : [id]);
+      if (row && row.ts != null) out.set(id, row.ts);
+    }
+    return out;
+  }
   const rows = db.all(
     `SELECT connectionId, MAX(ts) AS ts FROM requestMetrics
      WHERE kind = 'attempt' AND outcome = 'ok' AND connectionId IS NOT NULL ${provider ? "AND provider = ?" : ""}

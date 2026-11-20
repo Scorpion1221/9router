@@ -604,10 +604,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return result;
   }
 
-  const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
+  const { onStreamComplete, streamDetailId, detailRequest, detailProviderRequest } = buildOnStreamComplete({ ...sharedCtx });
   clientSignal?.removeEventListener("abort", onClientAbort);
   streamHandedOff = true;
-  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, namespaceTools, streamController, onStreamComplete, streamDetailId, credentials });
+  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, namespaceTools, streamController, onStreamComplete, streamDetailId, detailRequest, detailProviderRequest, credentials });
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

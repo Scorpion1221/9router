@@ -3,7 +3,7 @@ import { FORMATS } from "../translator/formats.js";
 import { PROVIDERS } from "../config/providers.js";
 import { liftReasoningAliases } from "../translator/concerns/reasoning.js";
 import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
-import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
+import { extractUsage, mergeUsage, hasValidUsage, estimateInputTokens, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
 import { restoreToolNames } from "./opencodeFingerprint.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
@@ -62,6 +62,10 @@ export function createSSEStream(options = {}) {
     credentials = null,
     tierAudit = null
   } = options;
+
+  // Estimate input tokens once up front so the TransformStream closures never
+  // retain multi-megabyte request bodies for the lifetime of an active stream.
+  const estimatedInputTokens = body ? estimateInputTokens(body) : 0;
 
   let buffer = "";
   let usage = null;
@@ -130,7 +134,7 @@ export function createSSEStream(options = {}) {
     let finalUsage = isPassthrough ? usage : state?.usage;
 
     if (!hasValidUsage(finalUsage) && totalContentLength > 0) {
-      finalUsage = estimateUsage(body, totalContentLength, isPassthrough ? FORMATS.OPENAI : sourceFormat);
+      finalUsage = estimateUsage(estimatedInputTokens, totalContentLength, isPassthrough ? FORMATS.OPENAI : sourceFormat);
       if (isPassthrough) usage = finalUsage; else state.usage = finalUsage;
     }
 
@@ -310,7 +314,7 @@ export function createSSEStream(options = {}) {
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
-                const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
+                const estimated = estimateUsage(estimatedInputTokens, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 usage = estimated;
@@ -474,7 +478,7 @@ export function createSSEStream(options = {}) {
             // Inject estimated usage if finish chunk has no valid usage
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
             if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
-              const estimated = estimateUsage(body, totalContentLength, sourceFormat);
+              const estimated = estimateUsage(estimatedInputTokens, totalContentLength, sourceFormat);
               item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
               state.usage = estimated;
             } else if (state.finishReason && isFinishChunk && state.usage) {

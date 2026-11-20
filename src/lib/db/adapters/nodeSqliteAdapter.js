@@ -33,9 +33,10 @@ export async function createNodeSqliteAdapter(filePath) {
     return stmt;
   }
 
-  // Periodic WAL checkpoint to keep -wal/-shm small
+  // Periodic non-blocking WAL checkpoint (TRUNCATE waits on busy_timeout if an
+  // external reader holds a WAL snapshot, stalling the main thread).
   const checkpointTimer = setInterval(() => {
-    try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
+    try { db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
   }, CHECKPOINT_INTERVAL_MS);
   if (typeof checkpointTimer.unref === "function") checkpointTimer.unref();
 

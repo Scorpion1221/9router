@@ -21,9 +21,12 @@ export function createBetterSqliteAdapter(filePath) {
     return stmt;
   }
 
-  // Truncate WAL periodically so file stays small for backup/copy
+  // Checkpoint WAL periodically without blocking readers or the JS event loop.
+  // TRUNCATE waits up to busy_timeout (5s) whenever an external reader (e.g.
+  // gateway-alert.service or a draining rollout slot) holds a WAL read mark;
+  // PASSIVE returns immediately after flushing all unblocked frames.
   const checkpointTimer = setInterval(() => {
-    try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+    try { db.pragma("wal_checkpoint(PASSIVE)"); } catch {}
   }, CHECKPOINT_INTERVAL_MS);
   if (typeof checkpointTimer.unref === "function") checkpointTimer.unref();
 

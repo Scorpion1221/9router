@@ -8,9 +8,18 @@ import { buildAbortedResponsesTerminalBytes } from "../../utils/responsesStreamH
 import { buildStreamErrorBytes } from "../../utils/streamHelpers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats, formatDoneLine } from "./requestDetail.js";
 import { createCodexTierAudit } from "../../utils/codexTierAudit.js";
+import { truncateJsonField } from "../../utils/truncateJson.js";
 import { saveRequestDetail } from "@/lib/usageDb.js";
 import { SSE_HEADERS_CORS as SSE_HEADERS } from "../../utils/sseConstants.js";
 import { upstreamResponseHeaders } from "../../utils/upstreamHeaders.js";
+
+function resolveDetailMaxJsonSize() {
+  if (typeof globalThis.__9rObservabilityMaxJsonSize === "number" && globalThis.__9rObservabilityMaxJsonSize > 0) {
+    return globalThis.__9rObservabilityMaxJsonSize;
+  }
+  const kb = parseInt(process.env.OBSERVABILITY_MAX_JSON_SIZE || "5", 10);
+  return (Number.isFinite(kb) && kb > 0 ? kb : 5) * 1024;
+}
 
 // Codex returns Responses API SSE → which client format to translate INTO, by request sourceFormat.
 // Gemini-family all map to ANTIGRAVITY decoder; unknown sources fall back to OPENAI.
@@ -49,7 +58,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
 /**
  * Handle streaming response — pipe provider SSE through transform stream to client.
  */
-export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, namespaceTools, streamController, onStreamComplete, streamDetailId, pxpipe, reqTag, log, credentials }) {
+export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, namespaceTools, streamController, onStreamComplete, streamDetailId, detailRequest, detailProviderRequest, pxpipe, reqTag, log, credentials }) {
   if (onRequestSuccess) {
     Promise.resolve()
       .then(onRequestSuccess)
@@ -103,8 +112,8 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     provider, model, connectionId,
     latency: { ttft: 0, total: Date.now() - requestStartTime },
     tokens: { prompt_tokens: 0, completion_tokens: 0 },
-    request: extractRequestConfig(body, stream),
-    providerRequest: finalBody || translatedBody || null,
+    request: detailRequest ?? extractRequestConfig(body, stream),
+    providerRequest: detailProviderRequest ?? (finalBody || translatedBody || null),
     providerResponse: "[Streaming - raw response not captured]",
     response: { content: "[Streaming in progress...]", thinking: null, type: "streaming" },
     pxpipe,
@@ -124,6 +133,13 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
  */
 export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, onStreamOutcome, pxpipe, reqTag, log }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  const endpoint = clientRawRequest?.endpoint;
+  // Snapshot compact detail payloads once up front so the onStreamComplete closure
+  // never pins multi-megabyte request bodies in old-space RAM across active streams,
+  // and handleStreamingResponse can reuse them without re-truncating.
+  const detailMaxSize = resolveDetailMaxJsonSize();
+  const detailRequest = truncateJsonField(body ? extractRequestConfig(body, stream) : {}, detailMaxSize);
+  const detailProviderRequest = truncateJsonField(finalBody || translatedBody || null, detailMaxSize);
 
   const onStreamComplete = (contentObj, usage, ttftAt) => {
     const latency = {
@@ -137,8 +153,8 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       provider, model, connectionId,
       latency,
       tokens: usage || { prompt_tokens: 0, completion_tokens: 0 },
-      request: extractRequestConfig(body, stream),
-      providerRequest: finalBody || translatedBody || null,
+      request: detailRequest,
+      providerRequest: detailProviderRequest,
       providerResponse: safeContent,
       response: { content: safeContent, thinking: safeThinking, type: "streaming" },
       pxpipe,
@@ -148,7 +164,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     });
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE", silent: true });
+    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint, label: "STREAM USAGE", silent: true });
     if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency }));
     // HTTP 200 alone doesn't mean the call worked: an in-band error event, or a
     // stream that carried nothing at all, is a failed attempt.
@@ -159,5 +175,5 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     else onStreamOutcome?.({ outcome: "ok", status: 200, ttftMs: latency.ttft, totalMs: latency.total });
   };
 
-  return { onStreamComplete, streamDetailId };
+  return { onStreamComplete, streamDetailId, detailRequest, detailProviderRequest };
 }

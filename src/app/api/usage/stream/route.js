@@ -1,85 +1,83 @@
-import { getUsageStats, statsEmitter, getActiveRequests } from "@/lib/usageDb";
+import { statsEmitter, getActiveRequests } from "@/lib/usageDb";
 import { onDrain } from "@/lib/shutdown.js";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const encoder = new TextEncoder();
-  const state = { closed: false, keepalive: null, send: null, sendPending: null, cachedStats: null, offDrain: null };
+  const state = { closed: false, sending: false, dirty: false, keepalive: null, send: null, offDrain: null };
+
+  const cleanup = () => {
+    if (state.closed) return;
+    state.closed = true;
+    if (state.send) {
+      statsEmitter.off("update", state.send);
+      statsEmitter.off("pending", state.send);
+    }
+    if (state.keepalive) {
+      clearInterval(state.keepalive);
+      state.keepalive = null;
+    }
+    if (state.offDrain) {
+      const off = state.offDrain;
+      state.offDrain = null;
+      off();
+    }
+  };
 
   const stream = new ReadableStream({
     async start(controller) {
-      // Full stats refresh (heavy) + immediate lightweight push
+      // UsageStats.js fetches period aggregates via REST and only reads live
+      // in-memory fields from SSE. Pushing getActiveRequests() directly avoids
+      // scanning SQLite on every request completion while a tab is open.
       state.send = async () => {
         if (state.closed) return;
+        if (state.sending) {
+          state.dirty = true;
+          return;
+        }
+        state.sending = true;
         try {
-          // Push lightweight update immediately so UI reflects changes fast
-          if (state.cachedStats) {
-            const { activeRequests, recentRequests, errorProvider } = await getActiveRequests();
-            const quickStats = { ...state.cachedStats, activeRequests, recentRequests, errorProvider };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(quickStats)}\n\n`));
-          }
-          // Then do full recalc and update cache
-          const stats = await getUsageStats();
-          state.cachedStats = stats;
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(stats)}\n\n`));
+          do {
+            state.dirty = false;
+            const live = await getActiveRequests();
+            if (state.closed) return;
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(live)}\n\n`));
+          } while (state.dirty && !state.closed);
         } catch {
-          state.closed = true;
-          statsEmitter.off("update", state.send);
-          statsEmitter.off("pending", state.sendPending);
-          clearInterval(state.keepalive);
+          cleanup();
+        } finally {
+          state.sending = false;
         }
       };
-
-      // Lightweight push: only refresh activeRequests + recentRequests on pending changes
-      state.sendPending = async () => {
-        if (state.closed || !state.cachedStats) return;
-        try {
-          const { activeRequests, recentRequests, errorProvider } = await getActiveRequests();
-          const stats = { ...state.cachedStats, activeRequests, recentRequests, errorProvider };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(stats)}\n\n`));
-        } catch {
-          state.closed = true;
-          statsEmitter.off("update", state.send);
-          statsEmitter.off("pending", state.sendPending);
-          clearInterval(state.keepalive);
-        }
-      };
-
-      await state.send();
 
       statsEmitter.on("update", state.send);
-      statsEmitter.on("pending", state.sendPending);
+      statsEmitter.on("pending", state.send);
 
       state.keepalive = setInterval(() => {
-        if (state.closed) { clearInterval(state.keepalive); return; }
+        if (state.closed) { cleanup(); return; }
         try {
           controller.enqueue(encoder.encode(": ping\n\n"));
         } catch {
-          state.closed = true;
-          clearInterval(state.keepalive);
+          cleanup();
         }
       }, 25000);
+      state.keepalive.unref?.();
 
       // A dashboard stream never ends on its own and would hold a deploy's drain
       // open; end it when the process starts draining. EventSource reconnects,
       // which lands on the new instance.
       state.offDrain = onDrain(() => {
         if (state.closed) return;
-        state.closed = true;
-        statsEmitter.off("update", state.send);
-        statsEmitter.off("pending", state.sendPending);
-        clearInterval(state.keepalive);
+        cleanup();
         try { controller.close(); } catch { /* already closed */ }
       });
+
+      await state.send();
     },
 
     cancel() {
-      state.closed = true;
-      statsEmitter.off("update", state.send);
-      statsEmitter.off("pending", state.sendPending);
-      clearInterval(state.keepalive);
-      state.offDrain?.();
+      cleanup();
     },
   });
 

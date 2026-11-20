@@ -74,7 +74,7 @@ export async function listAccounts({ provider, since = "1h", withLastOk = false 
   const byConn = new Map(stats.rows.map((r) => [r.key, r]));
   // Last success can be older than the window: look across the whole retention
   // (only for the accounts view; status/check don't need it).
-  const lastOkBy = withLastOk ? await getLastOkByConnection({ provider }) : new Map();
+  const lastOkBy = withLastOk ? await getLastOkByConnection({ provider, connectionIds: conns.map((c) => c.id) }) : new Map();
   return conns.map((c) => {
     const s = byConn.get(c.id);
     const pub = publicConnection(c);

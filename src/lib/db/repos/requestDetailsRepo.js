@@ -1,6 +1,7 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { onDrain, isDraining } from "@/lib/shutdown.js";
+import { truncateJsonField } from "open-sse/utils/truncateJson.js";
 
 const DEFAULT_MAX_RECORDS = 200;
 const DEFAULT_BATCH_SIZE = 20;
@@ -27,6 +28,7 @@ async function getObservabilityConfig() {
         maxJsonSize: (settings.observabilityMaxJsonSize || parseInt(process.env.OBSERVABILITY_MAX_JSON_SIZE || "5", 10)) * 1024,
       };
       cachedConfigTs = Date.now();
+      globalThis.__9rObservabilityMaxJsonSize = cachedConfig.maxJsonSize;
       return cachedConfig;
     }
     const envFallback = process.env.OBSERVABILITY_ENABLED !== "false";
@@ -52,6 +54,7 @@ async function getObservabilityConfig() {
     };
   }
   cachedConfigTs = Date.now();
+  globalThis.__9rObservabilityMaxJsonSize = cachedConfig.maxJsonSize;
   return cachedConfig;
 }
 
@@ -69,7 +72,7 @@ function sanitizeHeaders(headers) {
   return sanitized;
 }
 
-export const __test__ = { sanitizeHeaders };
+export const __test__ = { sanitizeHeaders, truncateField: truncateJsonField, get writeBuffer() { return writeBuffer; } };
 
 function generateDetailId(model) {
   const timestamp = new Date().toISOString();
@@ -78,12 +81,26 @@ function generateDetailId(model) {
   return `${timestamp}-${random}-${modelPart}`;
 }
 
-function truncateField(obj, maxSize) {
-  const str = JSON.stringify(obj || {});
-  if (str.length > maxSize) {
-    return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
-  }
-  return obj || {};
+function buildStoredRecord(item, maxJsonSize) {
+  const reqPayload = item.request?.headers
+    ? { ...item.request, headers: sanitizeHeaders(item.request.headers) }
+    : item.request;
+
+  return {
+    id: item.id || generateDetailId(item.model),
+    provider: item.provider || null,
+    model: item.model || null,
+    connectionId: item.connectionId || null,
+    timestamp: item.timestamp || new Date().toISOString(),
+    status: item.status || null,
+    latency: item.latency || {},
+    tokens: item.tokens || {},
+    request: truncateJsonField(reqPayload, maxJsonSize),
+    providerRequest: truncateJsonField(item.providerRequest, maxJsonSize),
+    providerResponse: truncateJsonField(item.providerResponse, maxJsonSize),
+    response: truncateJsonField(item.response, maxJsonSize),
+    pxpipe: item.pxpipe || undefined,
+  };
 }
 
 async function flushToDatabase() {
@@ -98,27 +115,7 @@ async function flushToDatabase() {
       const config = await getObservabilityConfig();
 
       db.transaction(() => {
-        for (const item of items) {
-          if (!item.id) item.id = generateDetailId(item.model);
-          if (!item.timestamp) item.timestamp = new Date().toISOString();
-          if (item.request?.headers) item.request.headers = sanitizeHeaders(item.request.headers);
-
-          const record = {
-            id: item.id,
-            provider: item.provider || null,
-            model: item.model || null,
-            connectionId: item.connectionId || null,
-            timestamp: item.timestamp,
-            status: item.status || null,
-            latency: item.latency || {},
-            tokens: item.tokens || {},
-            request: truncateField(item.request, config.maxJsonSize),
-            providerRequest: truncateField(item.providerRequest, config.maxJsonSize),
-            providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
-            response: truncateField(item.response, config.maxJsonSize),
-            pxpipe: item.pxpipe || undefined,
-          };
-
+        for (const record of items) {
           db.run(
             `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data`,
             [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
@@ -145,7 +142,9 @@ export async function saveRequestDetail(detail) {
   const config = await getObservabilityConfig();
   if (!config.enabled) {return;}
 
-  writeBuffer.push(detail);
+  // Truncate and sanitize eagerly before buffering so writeBuffer never pins
+  // multi-megabyte request/response objects in RAM waiting for the next flush.
+  writeBuffer.push(buildStoredRecord(detail, config.maxJsonSize));
 
   // Trigger immediate flush if batch threshold reached.
   // flushToDatabase() drains entire buffer in a loop, so all pushes during await are persisted.
@@ -159,6 +158,7 @@ export async function saveRequestDetail(detail) {
       flushTimer = null;
       flushToDatabase().catch(() => {});
     }, config.flushIntervalMs);
+    flushTimer.unref?.();
   }
 }
 

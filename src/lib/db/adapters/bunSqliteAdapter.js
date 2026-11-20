@@ -21,8 +21,9 @@ export async function createBunSqliteAdapter(filePath) {
     return stmt;
   }
 
+  // Periodic non-blocking WAL checkpoint (TRUNCATE blocks up to busy_timeout on readers).
   const checkpointTimer = setInterval(() => {
-    try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
+    try { db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
   }, CHECKPOINT_INTERVAL_MS);
   if (typeof checkpointTimer.unref === "function") checkpointTimer.unref();
 
