@@ -10,7 +10,7 @@ import { getCredentialExpiryMs, hasDeadRefreshToken } from "open-sse/services/oa
 export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 10 * 1000;
-const SENSITIVE_PROVIDERS = new Set(["antigravity", "gemini-cli"]);
+const SENSITIVE_PROVIDERS = new Set(["antigravity", "antigravity-enterprise", "gemini-cli"]);
 
 // Next bundles this module separately into instrumentation and into the app's server
 // chunks, and each copy has its own module scope. The state lives on global so a

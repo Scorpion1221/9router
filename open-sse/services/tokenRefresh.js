@@ -161,6 +161,12 @@ function vertexRefreshHandler(c, log) {
 const REFRESH_HANDLERS = {
   "gemini-cli": (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS["gemini-cli"].clientId, PROVIDERS["gemini-cli"].clientSecret, log),
   antigravity: (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS.antigravity.clientId, PROVIDERS.antigravity.clientSecret, log),
+  // The OAuth client is stored per connection (imported with the refresh token), not in the registry.
+  "antigravity-enterprise": (c, log) => {
+    const { clientId, clientSecret } = c.providerSpecificData || {};
+    if (!clientId || !clientSecret) return null;
+    return refreshGoogleToken(c.refreshToken, clientId, clientSecret, log);
+  },
   claude: (c, log) => refreshClaudeOAuthToken(c.refreshToken, log),
   codex: (c, log) => refreshCodexToken(c.refreshToken, log),
   iflow: (c, log) => refreshIflowToken(c.refreshToken, log),
@@ -249,6 +255,7 @@ export function formatProviderCredentials(provider, credentials, log) {
       };
 
     case "antigravity":
+    case "antigravity-enterprise":
     case "gemini-cli":
       return {
         accessToken: credentials.accessToken,

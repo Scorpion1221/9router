@@ -106,6 +106,11 @@ export const ANTIGRAVITY_OAUTH_CLIENT = {
   clientSecret: "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"
 };
 
+// Antigravity enterprise (Gemini Enterprise / Workspace "gcp" login) uses the Business AI
+// Code (BAIC) API instead of cloudcode-pa. Its OAuth client is not stored in the repo: each
+// connection carries the client id/secret it was imported with (providerSpecificData).
+export const ANTIGRAVITY_ENTERPRISE_BASE_URL = "https://businessaicode.googleapis.com/v1beta";
+
 // Gemini (Google) OAuth client credentials (public CLI client — shared by gemini, gemini-cli, src/lib/oauth)
 export const GOOGLE_OAUTH_CLIENT = {
   clientId: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",

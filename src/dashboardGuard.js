@@ -56,6 +56,8 @@ const ALWAYS_PROTECTED = [
   "/api/oauth/cursor/auto-import",
   "/api/oauth/kiro/auto-import",
   "/api/oauth/zed/auto-import",
+  // Returns the host's Antigravity desktop login (refresh token + OAuth client).
+  "/api/oauth/antigravity-enterprise/local-read",
   // Returns the host's Command Code API key in plain text.
   "/api/oauth/commandcode/auto-import",
   "/api/oauth/minimax-code/lease",
@@ -97,6 +99,8 @@ const LOCAL_ONLY_PATHS = [
   "/api/oauth/cursor/auto-import",
   "/api/oauth/kiro/auto-import",
   "/api/oauth/zed/auto-import",
+  // Returns the host's Antigravity desktop login (refresh token + OAuth client).
+  "/api/oauth/antigravity-enterprise/local-read",
   // Returns the host's Command Code API key in plain text.
   "/api/oauth/commandcode/auto-import",
   "/api/oauth/minimax-code/lease",

@@ -1,0 +1,129 @@
+// Antigravity Enterprise (Gemini Enterprise login) → Business AI Code.
+import { describe, expect, it } from "vitest";
+import { parseAntigravityKeyringValue, parseAntigravityEnterpriseBundle } from "../../src/lib/oauth/utils/antigravityEnterpriseCredentials.js";
+import { toProviderConnectionResponse } from "../../src/lib/providerConnectionResponse.js";
+import { getExecutor } from "../../open-sse/executors/index.js";
+import { PROVIDERS } from "../../open-sse/config/providers.js";
+import { translateRequest } from "../../open-sse/translator/index.js";
+import { FORMATS } from "../../open-sse/translator/formats.js";
+import { DEFAULT_THINKING_AG_SIGNATURE } from "../../open-sse/config/defaultThinkingSignature.js";
+
+const keyringJson = {
+  token: { access_token: "ya29.a", token_type: "Bearer", refresh_token: "1//r", expiry: "2026-11-23T08:27:33Z" },
+  auth_method: "gcp",
+  project_id: "proj-x",
+  region: "global",
+  user_tier: "gcp-ge-plus-tier",
+  tier_display_name: "Gemini Enterprise Plus",
+};
+
+const creds = {
+  accessToken: "ya29.a",
+  projectId: "proj-x",
+  providerSpecificData: { userTier: "gcp-ge-plus-tier", region: "global" },
+};
+
+describe("antigravity-enterprise keychain import", () => {
+  it("decodes the go-keyring base64 payload", () => {
+    const raw = `go-keyring-base64:${Buffer.from(JSON.stringify(keyringJson)).toString("base64")}\n`;
+    expect(parseAntigravityKeyringValue(raw)).toEqual({
+      authMethod: "gcp",
+      accessToken: "ya29.a",
+      refreshToken: "1//r",
+      expiresAt: "2026-11-23T08:27:33Z",
+      projectId: "proj-x",
+      region: "global",
+      userTier: "gcp-ge-plus-tier",
+      tierDisplayName: "Gemini Enterprise Plus",
+    });
+  });
+
+  it("accepts a plain JSON value too", () => {
+    expect(parseAntigravityKeyringValue(JSON.stringify(keyringJson)).projectId).toBe("proj-x");
+  });
+});
+
+describe("antigravity-enterprise executor", () => {
+  const executor = getExecutor("antigravity-enterprise");
+
+  it("keeps no OAuth client in the registry (it is stored per connection)", () => {
+    expect(PROVIDERS["antigravity-enterprise"].clientId).toBeUndefined();
+    expect(PROVIDERS["antigravity-enterprise"].clientSecret).toBeUndefined();
+  });
+
+  it("does not refresh without a stored client", async () => {
+    expect(await executor.refreshCredentials({ refreshToken: "1//r", providerSpecificData: {} })).toBeNull();
+  });
+
+  it("targets the BAIC location resource", () => {
+    expect(executor.buildUrl("gemini-4-carbon-medium", true, 0, creds)).toBe(
+      "https://businessaicode.googleapis.com/v1beta/projects/proj-x/locations/global:streamGenerateContent?alt=sse",
+    );
+    expect(executor.buildUrl("gemini-4-carbon-medium", false, 0, creds)).toBe(
+      "https://businessaicode.googleapis.com/v1beta/projects/proj-x/locations/global:generateContent",
+    );
+  });
+
+  it("refuses to build a URL without a project", () => {
+    expect(() => executor.buildUrl("m", true, 0, { providerSpecificData: {} })).toThrow(/project/);
+  });
+
+  it("adds model + entitlement to the translated Gemini body", () => {
+    const translated = translateRequest(
+      FORMATS.OPENAI, FORMATS.GEMINI, "gemini-4-carbon-medium",
+      { model: "gemini-4-carbon-medium", messages: [{ role: "user", content: "hi" }], stream: true },
+      true, creds, "antigravity-enterprise",
+    );
+    const body = executor.transformRequest("gemini-4-carbon-medium", translated, true, creds);
+    expect(body.model).toBe("gemini-4-carbon-medium");
+    expect(body.entitlement).toEqual({ userTier: "gcp-ge-plus-tier" });
+    expect(body.contents[0].parts[0].text).toBe("hi");
+    // BAIC 400s on HarmCategory values it doesn't know.
+    expect((body.safetySettings || []).map((x) => x.category)).not.toContain("HARM_CATEGORY_CIVIC_INTEGRITY");
+  });
+
+  it("replaces placeholder thought signatures with the skip marker, keeps real ones", () => {
+    const body = executor.transformRequest("m", {
+      contents: [
+        { role: "model", parts: [{ functionCall: { name: "a", args: {} }, thoughtSignature: DEFAULT_THINKING_AG_SIGNATURE }] },
+        { role: "model", parts: [{ functionCall: { name: "b", args: {} }, thoughtSignature: "real-sig" }] },
+      ],
+    }, true, creds);
+    expect(body.contents[0].parts[0].thoughtSignature).toBe("skip_thought_signature_validator");
+    expect(body.contents[1].parts[0].thoughtSignature).toBe("real-sig");
+  });
+});
+
+describe("antigravity-enterprise pasted bundle", () => {
+  const good = {
+    clientId: "123456-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com",
+    clientSecret: "GOCSPX-test",
+    refreshToken: "1//r",
+    projectId: "proj-x",
+    userTier: "gcp-ge-plus-tier",
+  };
+
+  it("accepts the JSON produced by Read from this Mac", () => {
+    expect(parseAntigravityEnterpriseBundle(JSON.stringify(good))).toMatchObject({ ...good, region: "global" });
+  });
+
+  it("names the missing fields", () => {
+    expect(() => parseAntigravityEnterpriseBundle({ ...good, refreshToken: "", userTier: "" })).toThrow(/refreshToken, userTier/);
+  });
+
+  it("rejects a non-Google client id and an odd region", () => {
+    expect(() => parseAntigravityEnterpriseBundle({ ...good, clientId: "x" })).toThrow(/client id/);
+    expect(() => parseAntigravityEnterpriseBundle({ ...good, region: "../x" })).toThrow(/region/);
+  });
+
+  it("never sends the stored client secret to the dashboard", () => {
+    const out = toProviderConnectionResponse({
+      provider: "antigravity-enterprise",
+      accessToken: "a",
+      refreshToken: "r",
+      providerSpecificData: { clientId: good.clientId, clientSecret: "GOCSPX-test", userTier: "t" },
+    });
+    expect(out.providerSpecificData).toEqual({ clientId: good.clientId, userTier: "t" });
+    expect(out.refreshToken).toBeUndefined();
+  });
+});

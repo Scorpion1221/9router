@@ -17,6 +17,8 @@ import { resolveClineModels, resolveClinepassModels } from "open-sse/services/cl
 import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js";
 import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
 import codexProvider from "open-sse/providers/registry/codex.js";
+import { PROVIDERS } from "open-sse/config/providers.js";
+import { baicLocationPath } from "open-sse/executors/antigravity-enterprise.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -324,6 +326,26 @@ const PROVIDER_MODELS_CONFIG = {
         warning: "Kimchi returned no live models; falling back to static catalog.",
       };
     }
+  },
+  // Antigravity Enterprise: models are the account's BAIC "experiences" (:fetchConfig).
+  "antigravity-enterprise": {
+    customResolver: buildOAuthResolver({
+      refreshFn: (c) => (c.providerSpecificData?.clientId && c.providerSpecificData?.clientSecret
+        ? refreshGoogleToken(c.refreshToken, c.providerSpecificData.clientId, c.providerSpecificData.clientSecret)
+        : null),
+      fetchFn: (token, c) => {
+        const userTier = c.providerSpecificData?.userTier;
+        const qs = userTier ? `?${new URLSearchParams({ "entitlement.userTier": userTier })}` : "";
+        const creds = { projectId: c.projectId, providerSpecificData: c.providerSpecificData };
+        return fetch(`${PROVIDERS["antigravity-enterprise"].baseUrl}/${baicLocationPath(creds)}:fetchConfig${qs}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      },
+      parseFn: (data) => (data?.availableExperiences || [])
+        .filter((e) => e?.name)
+        .map((e) => ({ id: e.name, name: e.model?.displayName || e.name })),
+      errorLabel: "Failed to fetch Antigravity Enterprise models",
+    }),
   },
   cursor: {
     customResolver: async (connection) => {
