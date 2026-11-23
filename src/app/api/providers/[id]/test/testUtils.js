@@ -28,6 +28,7 @@ import {
 } from "@/lib/oauth/constants/oauth";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
 import { hasWebIdentityProbe, fetchWebIdentity } from "open-sse/services/webIdentity.js";
+import { fetchAntigravityEnterpriseConfig } from "open-sse/executors/antigravity-enterprise.js";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
@@ -51,6 +52,9 @@ const OAUTH_TEST_CONFIG = {
     authPrefix: "Bearer ",
     refreshable: true,
   },
+  // Probed with Business AI Code :fetchConfig (see testOAuthConnection), which checks
+  // the token, the project and the license tier in one read-only call.
+  "antigravity-enterprise": { refreshable: true },
   antigravity: {
     url: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
     method: "GET",
@@ -283,6 +287,20 @@ async function refreshOAuthToken(connection) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
+    // OAuth client is stored on the connection (imported with the refresh token).
+    if (provider === "antigravity-enterprise") {
+      const { clientId, clientSecret } = connection.providerSpecificData || {};
+      if (!clientId || !clientSecret) return null;
+      const response = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "refresh_token", refresh_token: refreshToken }),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
+    }
+
     // Single-use refresh tokens: share the per-connection lock with every other refresher.
     if (provider === "codex" || provider === "grok-cli" || provider === "xai" || provider === "claude" || provider === "nous") {
       return await refreshProviderCredentials(provider, connection, console);
@@ -395,6 +413,30 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
     }
 
     return { valid: false, error: initial.error, refreshed };
+  }
+
+  if (connection.provider === "antigravity-enterprise") {
+    const probe = async (token) => {
+      try {
+        const { models } = await fetchAntigravityEnterpriseConfig({
+          accessToken: token,
+          projectId: connection.projectId,
+          providerSpecificData: connection.providerSpecificData,
+        });
+        return models.length ? { valid: true } : { valid: false, error: "No models allowed for this account" };
+      } catch (err) {
+        return { valid: false, status: err.status, error: err.message };
+      }
+    };
+    const first = await probe(accessToken);
+    if (first.valid) return { valid: true, error: null, refreshed, newTokens };
+    if ((first.status === 401 || first.status === 403) && !refreshed && connection.refreshToken) {
+      const tokens = await refreshOAuthToken(connection);
+      if (!tokens?.accessToken) return { valid: false, error: "Token invalid or revoked", refreshed: false };
+      const retry = await probe(tokens.accessToken);
+      return { valid: !!retry.valid, error: retry.valid ? null : retry.error, refreshed: true, newTokens: tokens };
+    }
+    return { valid: false, error: first.error, refreshed };
   }
 
   if (connection.provider === "cline") {
