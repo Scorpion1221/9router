@@ -127,3 +127,41 @@ describe("antigravity-enterprise pasted bundle", () => {
     expect(out.refreshToken).toBeUndefined();
   });
 });
+
+describe("antigravity-enterprise weekly quota", async () => {
+  const { parseAntigravityEnterpriseQuota } = await import("../../open-sse/services/usage/antigravity-enterprise.js");
+  const { recordQuotaPoll, getQuotaSnapshot, isQuotaProvider, __resetQuotaStateForTests } = await import("../../open-sse/services/quotaState.js");
+  const { selectPollableConnections } = await import("../../src/sse/services/quotaPoller.js");
+  const body = {
+    groups: [{
+      displayName: "Gemini Enterprise Quota",
+      buckets: [{ bucketId: "gemini-enterprise-weekly", displayName: "Weekly", window: "weekly", resetTime: "2026-11-30T10:26:48Z", remainingFraction: 0.75 }],
+    }],
+    overageInfo: {},
+  };
+
+  it("maps the weekly bucket to a usage window", () => {
+    const usage = parseAntigravityEnterpriseQuota(body, 1000);
+    expect(usage.fetchedAt).toBe(1000);
+    expect(usage.quotas.weekly).toMatchObject({ used: 25, remaining: 75, resetAt: "2026-11-30T10:26:48Z", windowSeconds: 604800 });
+  });
+
+  it("feeds the 7d window of the live quota store", () => {
+    __resetQuotaStateForTests();
+    expect(isQuotaProvider("antigravity-enterprise")).toBe(true);
+    recordQuotaPoll("antigravity-enterprise", "c1", parseAntigravityEnterpriseQuota(body, Date.now()));
+    const w = getQuotaSnapshot("c1").windows;
+    expect(Object.keys(w)).toEqual(["7d"]);
+    expect(w["7d"].usedPct).toBe(25);
+    expect(w["7d"].resetAt).toBe(Date.parse("2026-11-30T10:26:48Z"));
+  });
+
+  it("is polled like Claude/Codex accounts", () => {
+    const rows = [
+      { id: "a", provider: "antigravity-enterprise", authType: "oauth", isActive: true },
+      { id: "b", provider: "antigravity-enterprise", authType: "oauth", isActive: false },
+      { id: "c", provider: "antigravity", authType: "oauth", isActive: true },
+    ];
+    expect(selectPollableConnections(rows).map((r) => r.id)).toEqual(["a"]);
+  });
+});

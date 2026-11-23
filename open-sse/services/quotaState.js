@@ -6,7 +6,8 @@
 // Window keys: "5h" and "7d" are account-wide; "7d:<scope>" / "5h:<scope>" only
 // apply to models whose id contains <scope> (Claude "weekly fable", Codex spark).
 
-const QUOTA_PROVIDERS = new Set(["claude", "codex"]);
+// antigravity-enterprise: weekly project quota from a poll only (no response headers).
+const QUOTA_PROVIDERS = new Set(["claude", "codex", "antigravity-enterprise"]);
 const FIVE_HOURS_S = 5 * 3600;
 const WEEK_S = 7 * 24 * 3600;
 // A quota lock longer than this is treated as a bogus timestamp.
@@ -199,6 +200,10 @@ export function windowsFromUsage(provider, usage) {
         const m = /^weekly (.+) \(7d\)$/.exec(name);
         if (m) add(`7d:${m[1].trim().toLowerCase()}`, q);
       }
+      continue;
+    }
+    if (provider === "antigravity-enterprise") {
+      if (name === "weekly") add("7d", q);
       continue;
     }
     const m = /^(?:(\w+)_)?(session|weekly)$/.exec(name);

@@ -16,7 +16,10 @@ import {
 
 const POLL_MS = 30 * 1000;
 // Codex accounts are routed on the weekly window; its 5h window is not worth a column.
-const NO_5H_PROVIDERS = new Set(["codex"]);
+// Antigravity Enterprise only has a weekly (project-wide) quota.
+const NO_5H_PROVIDERS = new Set(["codex", "antigravity-enterprise"]);
+// Providers with Claude limit resets / Codex reset credits (the per-row reset button).
+const RESET_PROVIDERS = new Set(["claude", "codex"]);
 const DAY = 864e5;
 const ts = (iso) => (iso ? Date.parse(iso) : null);
 
@@ -58,6 +61,7 @@ function usePoolView(providerId, connections, strategyKey) {
 function useResetCounts(providerId, nonce) {
   const [counts, setCounts] = useState({});
   useEffect(() => {
+    if (!RESET_PROVIDERS.has(providerId)) return undefined;
     let cancelled = false;
     fetch(`/api/providers/resets?provider=${encodeURIComponent(providerId)}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -446,11 +450,11 @@ export default function QuotaConnectionList({
     const left = rc?.available;
     return (
       <>
-        <Tip as="button" type="button" className={`ib rs${left > 0 ? " has" : ""}`}
+        {RESET_PROVIDERS.has(providerId) && <Tip as="button" type="button" className={`ib rs${left > 0 ? " has" : ""}`}
           text={left > 0 ? `${left} limit reset${left === 1 ? "" : "s"} left${rc.useBy ? ` · expires ${formatWhen(Date.parse(rc.useBy), now)}` : ""} · click to check or use one` : left === 0 ? "No limit resets left · click for details" : "Limit resets · click to check"}
           onClick={() => setResetFor(a.conn)}>
           <Ic name="restart_alt" />{left != null && <span>{left}</span>}
-        </Tip>
+        </Tip>}
         {ap && (
           <Tip as="button" type="button" className={`ib${ap.on ? " on" : ""}`} aria-pressed={ap.on}
             text={ap.on
@@ -536,6 +540,16 @@ export default function QuotaConnectionList({
             </table>
           ) : <p className="dim">No quota reading yet. It fills in from traffic and a 15-minute poll.</p>}
         </section>
+        {providerId === "antigravity-enterprise" && (
+          <section>
+            <div className="dh">Account</div>
+            <dl className="kv">
+              <dt>Tier</dt><dd>{a.conn.providerSpecificData?.tierDisplayName || a.conn.providerSpecificData?.userTier || "–"}</dd>
+              <dt>Project</dt><dd>{a.conn.providerSpecificData?.projectId || a.conn.projectId || "–"} <span className="dim">· {a.conn.providerSpecificData?.region || "global"}</span></dd>
+              <dt>Quota</dt><dd className="dim">Weekly Gemini Enterprise quota of the project, shared by every seat on it.</dd>
+            </dl>
+          </section>
+        )}
         <section>
           <div className="dh">Routing</div>
           <dl className="kv">

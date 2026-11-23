@@ -20,7 +20,7 @@ export const PATCH = opsRoute("operate", async (req, { params, token }) => {
   if (!Object.keys(patch).length) throw opsError(400, `nothing to change (send one of ${POLICY_FIELDS.join(", ")})`);
 
   const conn = await resolveAccount(id);
-  if (!isQuotaProvider(conn.provider)) throw opsError(400, `selection policy applies to claude and codex accounts, not ${conn.provider}`);
+  if (!isQuotaProvider(conn.provider)) throw opsError(400, `selection policy applies to claude, codex and antigravity-enterprise accounts, not ${conn.provider}`);
   const before = publicConnection(conn);
   const updated = await updateProviderConnection(conn.id, patch);
   const after = publicConnection(updated);

@@ -27,7 +27,7 @@ export function effectiveStrategy(settings, provider) {
 }
 
 export async function providerPoolView(provider, { model = null } = {}) {
-  if (!isQuotaProvider(provider)) throw opsError(400, `quota view supports claude and codex, not '${provider}'`);
+  if (!isQuotaProvider(provider)) throw opsError(400, `quota view supports claude, codex and antigravity-enterprise, not '${provider}'`);
   const now = Date.now();
   const [settings, conns] = await Promise.all([getSettings(), getProviderConnections({ provider })]);
   const strategy = effectiveStrategy(settings, provider);

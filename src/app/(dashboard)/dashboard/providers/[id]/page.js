@@ -25,7 +25,7 @@ import ConnectionQuota from "./ConnectionQuota";
 import useConnectionQuotas, { supportsQuota } from "@/shared/hooks/useConnectionQuotas";
 
 // Providers with live quota windows, where the reset-first strategy applies.
-const RESET_FIRST_PROVIDERS = new Set(["claude", "codex"]);
+const RESET_FIRST_PROVIDERS = new Set(["claude", "codex", "antigravity-enterprise"]);
 import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";

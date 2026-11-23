@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request) {
   const provider = new URL(request.url).searchParams.get("provider");
   if (!provider || !isQuotaProvider(provider)) {
-    return NextResponse.json({ error: "provider must be claude or codex" }, { status: 400 });
+    return NextResponse.json({ error: "provider must be claude, codex or antigravity-enterprise" }, { status: 400 });
   }
   try {
     return NextResponse.json(await providerPoolView(provider));

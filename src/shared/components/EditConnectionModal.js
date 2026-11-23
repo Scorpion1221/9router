@@ -10,7 +10,7 @@ import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS
 import Select from "@/shared/components/Select";
 
 // Providers whose accounts expose live quota windows (reset-first routing).
-const QUOTA_POLICY_PROVIDERS = new Set(["claude", "codex"]);
+const QUOTA_POLICY_PROVIDERS = new Set(["claude", "codex", "antigravity-enterprise"]);
 
 function policyFromConnection(connection) {
   const keep = Number(connection?.keepPct);
