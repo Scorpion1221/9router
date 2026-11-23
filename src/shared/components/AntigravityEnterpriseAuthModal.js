@@ -17,6 +17,9 @@ export default function AntigravityEnterpriseAuthModal({ isOpen, onSuccess, onCl
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [cmdCopied, setCmdCopied] = useState(false);
+  const command = typeof window === "undefined" ? ""
+    : `curl -fsSL ${window.location.origin}/antigravity-enterprise-login.mjs | node --input-type=module - | pbcopy`;
 
   const handleClose = () => {
     setBundleText("");
@@ -34,7 +37,7 @@ export default function AntigravityEnterpriseAuthModal({ isOpen, onSuccess, onCl
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(res.status === 403
-          ? "Reading the Antigravity app only works when this 9Router runs on that Mac. Read it there and paste the JSON here."
+          ? "This 9Router is not running on your Mac. Run the command above in Terminal on your Mac instead, then paste."
           : data.error || "Could not read the Antigravity login");
       }
       setBundleText(JSON.stringify(data.bundle, null, 2));
@@ -42,6 +45,16 @@ export default function AntigravityEnterpriseAuthModal({ isOpen, onSuccess, onCl
       setError(err.message);
     } finally {
       setReading(false);
+    }
+  };
+
+  const handleCopyCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCmdCopied(true);
+      setTimeout(() => setCmdCopied(false), 1500);
+    } catch {
+      setError("Copy failed; select the command and copy it manually.");
     }
   };
 
@@ -89,11 +102,18 @@ export default function AntigravityEnterpriseAuthModal({ isOpen, onSuccess, onCl
                 <div className="text-sm text-blue-800 dark:text-blue-200 flex flex-col gap-1">
                   <p>Sign in to the Antigravity desktop app with your Workspace (Gemini Enterprise) account.</p>
                   <p>
-                    On that Mac, open 9Router and click <strong>Read from this Mac</strong> (macOS may ask to allow keychain access).
-                    To add the account on another 9Router, copy the JSON and paste it there.
+                    Then run this in Terminal on that Mac. It copies the login JSON to your clipboard
+                    (macOS may ask to allow keychain access). Paste it below.
                   </p>
                 </div>
               </div>
+            </div>
+
+            <div className="flex items-stretch gap-2">
+              <code className="flex-1 min-w-0 px-3 py-2 text-xs font-mono border border-border rounded-lg bg-background break-all select-all">{command}</code>
+              <Button size="sm" variant="outline" onClick={handleCopyCommand} className="self-center shrink-0">
+                {cmdCopied ? "Copied" : "Copy command"}
+              </Button>
             </div>
 
             <div>
