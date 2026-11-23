@@ -47,7 +47,9 @@ export class AntigravityEnterpriseExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     const userTier = credentials?.providerSpecificData?.userTier;
-    const out = { ...body, model };
+    // chatCore puts the resolved upstream id (bare name → experience with a level,
+    // reasoning effort → level) in body.model; `model` is what the client asked for.
+    const out = { ...body, model: body?.model || model };
     // BAIC's HarmCategory enum is older than the public Gemini API's: it 400s on
     // categories it doesn't know (e.g. CIVIC_INTEGRITY from the shared translator).
     if (Array.isArray(out.safetySettings)) {
@@ -68,6 +70,22 @@ export class AntigravityEnterpriseExecutor extends BaseExecutor {
     }
     if (userTier) out.entitlement = { ...(body?.entitlement || {}), userTier };
     return out;
+  }
+
+  // Quota 429s carry google.rpc.RetryInfo; lock the account until then instead of a
+  // short backoff (Business AI Code answers 429 RESOURCE_EXHAUSTED when the project's
+  // weekly quota or a per-user rate limit runs out).
+  parseError(response, bodyText) {
+    const base = super.parseError(response, bodyText);
+    if (response.status !== 429 || !bodyText) return base;
+    try {
+      const details = JSON.parse(bodyText)?.error?.details;
+      for (const d of Array.isArray(details) ? details : []) {
+        const sec = d?.["@type"] === "type.googleapis.com/google.rpc.RetryInfo" ? parseFloat(d.retryDelay) : NaN;
+        if (sec > 0) return { ...base, retryAfter: d.retryDelay, resetsAtMs: Date.now() + Math.round(sec * 1000) };
+      }
+    } catch { /* not JSON */ }
+    return base;
   }
 
   // The OAuth client is stored on the connection (imported with the refresh token),

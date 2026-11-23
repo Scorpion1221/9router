@@ -62,7 +62,22 @@ export default {
     { id: "gemini-3.1-pro-high", name: "Gemini 3.1 Pro (High)" },
     { id: "gemini-3.1-pro-low", name: "Gemini 3.1 Pro (Low)" },
     { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash Lite" },
+    // Bare names: BAIC only accepts an experience with a level, so these map to the
+    // medium level (Pro has no medium; it maps to high, like Antigravity's own default).
+    // A reasoning effort on the request still picks the matching level (getModelUpstreamId).
+    { id: "gemini-4-carbon", name: "Gemini 4 Carbon", upstreamModelId: "gemini-4-carbon-medium" },
+    { id: "gemini-4-neon", name: "Gemini 4 Neon", upstreamModelId: "gemini-4-neon-medium" },
+    { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen", upstreamModelId: "gemini-4-hydrogen-medium" },
+    { id: "gemini-4-argon", name: "Gemini 4 Argon", upstreamModelId: "gemini-4-argon-medium" },
+    { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", upstreamModelId: "gemini-3.8-flash-medium" },
+    { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash", upstreamModelId: "gemini-3.7-flash-medium" },
+    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash", upstreamModelId: "gemini-3.6-flash-medium" },
+    { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", upstreamModelId: "gemini-3.1-pro-high" },
   ],
+  // Quota Tracker page: weekly project quota via :fetchQuotaStatus.
+  features: {
+    usage: true,
+  },
   oauth: {
     tokenUrl: "https://oauth2.googleapis.com/token",
     refreshLeadMs: 300000,

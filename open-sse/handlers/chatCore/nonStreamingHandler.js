@@ -166,6 +166,12 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
         result.usage.completion_tokens_details = { reasoning_tokens: usage.thoughtsTokenCount };
       }
     }
+    // Gemini → OpenAI is the pivot; Responses-API and Claude clients need one more
+    // hop (same as the Chat Completions branch above), or they get a chat.completion body.
+    if (sourceFormat === FORMATS.OPENAI_RESPONSES) {
+      return openAICompletionToResponses(result, customToolNames, namespaceTools);
+    }
+    if (sourceFormat === FORMATS.CLAUDE) return openAICompletionToClaudeMessage(result);
     return result;
   }
 

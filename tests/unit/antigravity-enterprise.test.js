@@ -165,3 +165,41 @@ describe("antigravity-enterprise weekly quota", async () => {
     expect(selectPollableConnections(rows).map((r) => r.id)).toEqual(["a"]);
   });
 });
+
+describe("antigravity-enterprise model names and errors", async () => {
+  const { getModelUpstreamId } = await import("../../open-sse/config/providerModels.js");
+  const executor = getExecutor("antigravity-enterprise");
+
+  it("maps bare names to a level BAIC accepts", () => {
+    expect(getModelUpstreamId("age", "gemini-4-neon")).toBe("gemini-4-neon-medium");
+    expect(getModelUpstreamId("age", "gemini-3.1-pro")).toBe("gemini-3.1-pro-high");
+    expect(getModelUpstreamId("age", "gemini-4-neon", { reasoning_effort: "low" })).toBe("gemini-4-neon-low");
+    expect(getModelUpstreamId("age", "gemini-4-carbon-high")).toBe("gemini-4-carbon-high");
+  });
+
+  it("sends the resolved upstream model, not the client's bare name", () => {
+    const out = executor.transformRequest("gemini-4-neon", { model: "gemini-4-neon-medium", contents: [] }, true, creds);
+    expect(out.model).toBe("gemini-4-neon-medium");
+  });
+
+  it("locks until RetryInfo on a quota 429", () => {
+    const body = JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "quota", details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "3600s" }] } });
+    const r = executor.parseError({ status: 429, headers: new Headers() }, body);
+    expect(r.resetsAtMs - Date.now()).toBeGreaterThan(3590_000);
+  });
+});
+
+describe("Gemini non-stream reply for a Responses client", async () => {
+  const { translateNonStreamingResponse } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
+  it("comes back as a Responses object, not chat.completion", () => {
+    const gemini = { candidates: [{ content: { role: "model", parts: [{ text: "pong" }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1, totalTokenCount: 4 }, modelVersion: "gemini-4-neon" };
+    const out = translateNonStreamingResponse(gemini, FORMATS.GEMINI, FORMATS.OPENAI_RESPONSES);
+    expect(out.object).toBe("response");
+    expect(out.output.flatMap((o) => o.content || []).find((c) => c.type === "output_text")?.text).toBe("pong");
+    const claude = translateNonStreamingResponse(gemini, FORMATS.GEMINI, FORMATS.CLAUDE);
+    expect(claude.type).toBe("message");
+    expect(claude.content.find((c) => c.type === "text")?.text).toBe("pong");
+    // Chat Completions clients are unchanged.
+    expect(translateNonStreamingResponse(gemini, FORMATS.GEMINI, FORMATS.OPENAI).object).toBe("chat.completion");
+  });
+});
